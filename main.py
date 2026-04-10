@@ -12,31 +12,37 @@ import pandas as pd
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-import os, re
+import os, re, platform
 from datetime import datetime
 import sys
 
+# ─── Font detection (SF Pro trên macOS, Helvetica Neue fallback) ──────────────
+IS_MAC = platform.system() == 'Darwin'
+SANS   = '.AppleSystemUIFont' if IS_MAC else 'Helvetica Neue'
+MONO   = 'SF Mono'            if IS_MAC else 'Menlo'
+
 # ─── Apple-style palette ─────────────────────────────────────────────────────
 C = {
-    'bg':         '#F5F5F7',   # Apple light gray
+    'bg':         '#F2F2F7',   # iOS system background
     'card':       '#FFFFFF',
-    'border':     '#D2D2D7',
+    'border':     '#C6C6C8',
     'sep':        '#E5E5EA',
-    'primary':    '#0071E3',   # Apple blue
-    'primary_dk': '#005BBB',
-    'text':       '#1D1D1F',
-    'text2':      '#6E6E73',
+    'primary':    '#007AFF',   # iOS blue
+    'primary_dk': '#0062CC',
+    'text':       '#000000',
+    'text2':      '#8E8E93',
     'green':      '#34C759',
     'green_dk':   '#248A3D',
     'red_light':  '#FFF0F0',
-    'red_text':   '#C0392B',
-    'blue_light': '#F0F7FF',
-    'input_bg':   '#F5F5F7',
-    'check_sel':  '#E8F3FF',
+    'red_text':   '#FF3B30',
+    'blue_light': '#EAF3FF',
+    'input_bg':   '#F2F2F7',
+    'check_sel':  '#EAF3FF',
     'console_bg': '#1C1C1E',
     'console_fg': '#32D74B',
-    'tag_bg':     '#E8F3FF',
-    'tag_fg':     '#0058BD',
+    'tag_bg':     '#EAF3FF',
+    'tag_fg':     '#007AFF',
+    'hdr_top':    '#1C1C1E',
 }
 
 SALES = {
@@ -66,22 +72,22 @@ def strip_sku_prefix(t: str) -> str:
 # ─── Reusable widgets ─────────────────────────────────────────────────────────
 
 def make_card(parent, title, subtitle=''):
-    """Apple-style card: white rounded-ish frame with title + hairline separator."""
+    """Apple-style card: white frame with hairline border + separator."""
     outer = tk.Frame(parent, bg=C['border'], padx=1, pady=1)
     inner = tk.Frame(outer, bg=C['card'])
     inner.pack(fill=tk.BOTH, expand=True)
 
-    hdr = tk.Frame(inner, bg=C['card'], padx=18, pady=10)
+    hdr = tk.Frame(inner, bg=C['card'], padx=20, pady=12)
     hdr.pack(fill=tk.X)
-    tk.Label(hdr, text=title, font=('Helvetica Neue', 11, 'bold'),
+    tk.Label(hdr, text=title, font=(SANS, 13, 'bold'),
              bg=C['card'], fg=C['text']).pack(side=tk.LEFT)
     if subtitle:
-        tk.Label(hdr, text=subtitle, font=('Helvetica Neue', 9),
+        tk.Label(hdr, text=subtitle, font=(SANS, 11),
                  bg=C['card'], fg=C['text2']).pack(side=tk.LEFT, padx=(8, 0))
 
     tk.Frame(inner, bg=C['sep'], height=1).pack(fill=tk.X)
 
-    body = tk.Frame(inner, bg=C['card'], padx=18, pady=12)
+    body = tk.Frame(inner, bg=C['card'], padx=20, pady=14)
     body.pack(fill=tk.BOTH, expand=True)
 
     return outer, body
@@ -90,20 +96,107 @@ def make_card(parent, title, subtitle=''):
 def make_btn(parent, text, command, style='primary', small=False):
     """Flat Apple-style button."""
     if style == 'primary':
-        bg, fg, abg = C['primary'],   'white', C['primary_dk']
+        bg, fg, abg = C['primary'],    'white', C['primary_dk']
     elif style == 'green':
-        bg, fg, abg = C['green'],     'white', C['green_dk']
+        bg, fg, abg = C['green'],      'white', C['green_dk']
     elif style == 'ghost':
-        bg, fg, abg = C['blue_light'], C['primary'], '#DAEEFF'
+        bg, fg, abg = C['blue_light'], C['primary'], '#D0E8FF'
     else:
-        bg, fg, abg = C['sep'], C['text'], '#CACACE'
+        bg, fg, abg = C['sep'],        C['text'], '#D0D0D5'
 
-    font = ('Helvetica Neue', 9 if small else 11, 'bold')
-    px, py = (10, 4) if small else (20, 9)
+    font = (SANS, 10 if small else 13, 'bold')
+    px, py = (12, 5) if small else (22, 10)
     return tk.Button(parent, text=text, command=command,
                      font=font, bg=bg, fg=fg, bd=0, relief='flat',
                      cursor='hand2', padx=px, pady=py,
                      activebackground=abg, activeforeground=fg)
+
+
+# ─── Loading popup với spinner ───────────────────────────────────────────────
+
+class LoadingPopup:
+    """
+    Popup nhỏ giữa màn hình, có arc xoay tròn và message tuỳ chỉnh.
+    Dùng:  popup = LoadingPopup(root, 'message')  →  popup.close()
+    """
+    _SIZE   = 56   # đường kính vòng spinner
+    _THICK  = 5
+    _GAP    = 270  # phần trống của arc (°)
+    _SPEED  = 18   # ms giữa mỗi frame
+
+    def __init__(self, parent: tk.Tk, message: str):
+        self._running = False
+        self._angle   = 0
+
+        # ── Cửa sổ không có title bar ─────────────────────────────────────
+        self.top = tk.Toplevel(parent)
+        self.top.overrideredirect(True)
+        self.top.configure(bg=C['card'])
+        self.top.attributes('-topmost', True)
+        self.top.resizable(False, False)
+
+        # viền mỏng quanh popup
+        border = tk.Frame(self.top, bg=C['border'], padx=1, pady=1)
+        border.pack(fill=tk.BOTH, expand=True)
+        inner  = tk.Frame(border, bg=C['card'], padx=36, pady=28)
+        inner.pack(fill=tk.BOTH, expand=True)
+
+        # spinner canvas
+        s = self._SIZE
+        self._cv = tk.Canvas(inner, width=s, height=s,
+                             bg=C['card'], highlightthickness=0)
+        self._cv.pack()
+
+        # vòng nền mờ
+        m = self._THICK // 2 + 1
+        self._cv.create_oval(m, m, s - m, s - m,
+                             outline=C['sep'], width=self._THICK)
+        # arc xoay
+        self._arc_id = self._cv.create_arc(
+            m, m, s - m, s - m,
+            start=0, extent=360 - self._GAP,
+            outline=C['primary'], width=self._THICK, style='arc'
+        )
+
+        # dòng message (hỗ trợ xuống dòng)
+        tk.Label(inner, text=message,
+                 font=(SANS, 12), bg=C['card'], fg=C['text'],
+                 justify='center', wraplength=280,
+                 pady=(14)).pack(pady=(14, 0))
+
+        # căn giữa so với parent
+        self.top.update_idletasks()
+        pw = parent.winfo_width()
+        ph = parent.winfo_height()
+        px = parent.winfo_rootx()
+        py = parent.winfo_rooty()
+        ww = self.top.winfo_reqwidth()
+        wh = self.top.winfo_reqheight()
+        x  = px + (pw - ww) // 2
+        y  = py + (ph - wh) // 2
+        self.top.geometry(f'+{x}+{y}')
+
+        # chặn tương tác với cửa sổ chính
+        self.top.grab_set()
+
+        # bắt đầu animate
+        self._running = True
+        self._animate()
+
+    def _animate(self):
+        if not self._running:
+            return
+        self._angle = (self._angle - 8) % 360   # quay ngược chiều kim đồng hồ
+        self._cv.itemconfigure(self._arc_id, start=self._angle)
+        self._cv.after(self._SPEED, self._animate)
+
+    def close(self):
+        self._running = False
+        try:
+            self.top.grab_release()
+            self.top.destroy()
+        except tk.TclError:
+            pass
 
 
 # ─── Scrollable multi-select panel ───────────────────────────────────────────
@@ -118,45 +211,58 @@ class FilterPanel(tk.Frame):
         self._vars: dict[str, tk.BooleanVar] = {}
         self._all_items: list = []
         self._widgets: list = []
-        self._search_var = tk.StringVar()
-        self._search_var.trace_add('write', lambda *_: self._apply_search())
+        self._placeholder_active = True
         self._build()
 
+    # ── scroll helper ─────────────────────────────────────────────────────────
+    def _on_scroll(self, event):
+        """Route MouseWheel to this panel's canvas, stop propagation."""
+        if event.delta:
+            # Windows / macOS: delta is ±120 per notch (or smaller for trackpad)
+            units = int(-1 * (event.delta / 120)) or (-1 if event.delta > 0 else 1)
+        elif event.num == 4:
+            units = -1
+        else:
+            units = 1
+        self._canvas.yview_scroll(units, 'units')
+        return 'break'   # ← stops the event from reaching the outer canvas
+
     def _build(self):
-        # Ô tìm kiếm
+        # ── Ô tìm kiếm ───────────────────────────────────────────────────────
         search_wrap = tk.Frame(self, bg=C['border'], padx=1, pady=1)
-        search_wrap.pack(fill=tk.X, pady=(0, 6))
+        search_wrap.pack(fill=tk.X, pady=(0, 8))
         search_inner = tk.Frame(search_wrap, bg=C['input_bg'])
         search_inner.pack(fill=tk.X)
-        tk.Label(search_inner, text='🔍', font=('Helvetica Neue', 10),
-                 bg=C['input_bg'], fg=C['text2']).pack(side=tk.LEFT, padx=(8, 2))
+        tk.Label(search_inner, text='⌕', font=(SANS, 14),
+                 bg=C['input_bg'], fg=C['text2']).pack(side=tk.LEFT, padx=(10, 4))
         self._search_entry = tk.Entry(
-            search_inner, textvariable=self._search_var,
-            font=('Helvetica Neue', 10), bg=C['input_bg'], fg=C['text'],
+            search_inner,
+            font=(SANS, 12), bg=C['input_bg'], fg=C['text2'],
             relief='flat', bd=0, insertbackground=C['primary'])
-        self._search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6, padx=(0, 8))
+        self._search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=7, padx=(0, 10))
         self._search_entry.insert(0, 'Tìm kiếm...')
-        self._search_entry.config(fg=C['text2'])
-        self._search_entry.bind('<FocusIn>',  self._on_search_focus_in)
-        self._search_entry.bind('<FocusOut>', self._on_search_focus_out)
+        self._search_entry.bind('<FocusIn>',   self._on_search_focus_in)
+        self._search_entry.bind('<FocusOut>',  self._on_search_focus_out)
+        self._search_entry.bind('<KeyRelease>', lambda _e: self._apply_search())
 
-        # Toolbar
+        # ── Toolbar ───────────────────────────────────────────────────────────
         tb = tk.Frame(self, bg=C['card'])
-        tb.pack(fill=tk.X, pady=(0, 6))
+        tb.pack(fill=tk.X, pady=(0, 8))
         make_btn(tb, '✓ Tất Cả',  lambda: self._set_all(True),  style='ghost',   small=True).pack(side=tk.LEFT, padx=(0, 6))
         make_btn(tb, '✕ Bỏ Chọn', lambda: self._set_all(False), style='neutral', small=True).pack(side=tk.LEFT)
-        self.lbl_count = tk.Label(tb, text='—  chưa tải', font=('Helvetica Neue', 9),
+        self.lbl_count = tk.Label(tb, text='—  chưa tải', font=(SANS, 10),
                                    bg=C['card'], fg=C['text2'])
         self.lbl_count.pack(side=tk.RIGHT)
 
-        # Scroll area
-        wrap = tk.Frame(self, bg=C['input_bg'], bd=1, relief='solid',
-                        highlightbackground=C['border'], highlightthickness=1)
+        # ── Scroll area ───────────────────────────────────────────────────────
+        wrap = tk.Frame(self, bg=C['border'], padx=1, pady=1)
         wrap.pack(fill=tk.BOTH, expand=True)
+        inner_bg = tk.Frame(wrap, bg=C['card'])
+        inner_bg.pack(fill=tk.BOTH, expand=True)
 
-        self._canvas = tk.Canvas(wrap, bg=C['card'], height=150,
+        self._canvas = tk.Canvas(inner_bg, bg=C['card'], height=160,
                                   highlightthickness=0, bd=0)
-        vsb = tk.Scrollbar(wrap, orient='vertical', command=self._canvas.yview)
+        vsb = tk.Scrollbar(inner_bg, orient='vertical', command=self._canvas.yview)
         self._canvas.configure(yscrollcommand=vsb.set)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -168,27 +274,37 @@ class FilterPanel(tk.Frame):
             scrollregion=self._canvas.bbox('all')))
         self._canvas.bind('<Configure>', lambda e: self._canvas.itemconfig(
             self._win, width=e.width))
-        self._canvas.bind('<MouseWheel>', lambda e: self._canvas.yview_scroll(
-            int(-1 * (e.delta / 120)), 'units'))
+
+        # Scroll bindings – both canvas AND inner frame, return 'break' to stop bubbling
+        self._canvas.bind('<MouseWheel>', self._on_scroll)
+        self._inner.bind('<MouseWheel>',  self._on_scroll)
+        self._canvas.bind('<Button-4>',   self._on_scroll)   # Linux
+        self._canvas.bind('<Button-5>',   self._on_scroll)
 
         tk.Label(self._inner, text='Nhấn  "Đọc Files"  để tải danh sách',
-                 font=('Helvetica Neue', 9, 'italic'),
-                 bg=C['card'], fg=C['text2'], pady=24).pack()
+                 font=(SANS, 10, 'italic'),
+                 bg=C['card'], fg=C['text2'], pady=28).pack()
+
+    # ── Search ────────────────────────────────────────────────────────────────
 
     def _on_search_focus_in(self, e):
-        if self._search_entry.get() == 'Tìm kiếm...':
+        if self._placeholder_active:
             self._search_entry.delete(0, tk.END)
             self._search_entry.config(fg=C['text'])
+            self._placeholder_active = False
 
     def _on_search_focus_out(self, e):
-        if not self._search_entry.get():
+        if not self._search_entry.get().strip():
+            self._search_entry.delete(0, tk.END)
             self._search_entry.insert(0, 'Tìm kiếm...')
             self._search_entry.config(fg=C['text2'])
+            self._placeholder_active = True
 
     def _apply_search(self):
-        keyword = self._search_var.get().lower().strip()
-        if keyword == 'tìm kiếm...':
-            keyword = ''
+        if self._placeholder_active:
+            self._render(self._all_items)
+            return
+        keyword = self._search_entry.get().lower().strip()
         filtered = [i for i in self._all_items if keyword in i.lower()] if keyword else self._all_items
         self._render(filtered)
 
@@ -200,8 +316,8 @@ class FilterPanel(tk.Frame):
 
         if not items:
             tk.Label(self._inner, text='Không tìm thấy kết quả',
-                     font=('Helvetica Neue', 9, 'italic'),
-                     bg=C['card'], fg=C['text2'], pady=16).pack()
+                     font=(SANS, 10, 'italic'),
+                     bg=C['card'], fg=C['text2'], pady=20).pack()
             return
 
         cols = 2
@@ -210,12 +326,16 @@ class FilterPanel(tk.Frame):
                 self._vars[item] = tk.BooleanVar(value=False)
             cb = tk.Checkbutton(
                 self._inner, text=item, variable=self._vars[item],
-                font=('Helvetica Neue', 10), bg=C['card'], fg=C['text'],
+                font=(SANS, 11), bg=C['card'], fg=C['text'],
                 selectcolor=C['check_sel'], activebackground=C['card'],
                 anchor='w', command=self._update_count,
             )
             r, c = divmod(idx, cols)
-            cb.grid(row=r, column=c, sticky='w', padx=10, pady=2)
+            cb.grid(row=r, column=c, sticky='w', padx=10, pady=3)
+            # Scroll trên checkbox cũng cuộn panel, không bắn lên canvas ngoài
+            cb.bind('<MouseWheel>', self._on_scroll)
+            cb.bind('<Button-4>',   self._on_scroll)
+            cb.bind('<Button-5>',   self._on_scroll)
             self._widgets.append(cb)
 
         for c in range(cols):
@@ -225,22 +345,22 @@ class FilterPanel(tk.Frame):
         self._all_items = items
         self._vars.clear()
         self._widgets.clear()
-        # Reset ô tìm kiếm
-        self._search_var.set('')
+        # Reset ô tìm kiếm về placeholder
         self._search_entry.delete(0, tk.END)
         self._search_entry.insert(0, 'Tìm kiếm...')
         self._search_entry.config(fg=C['text2'])
+        self._placeholder_active = True
 
         self._render(items)
         self._update_count()
 
     def _set_all(self, val: bool):
         # Chỉ áp dụng cho items đang hiển thị (sau filter tìm kiếm)
-        keyword = self._search_var.get().lower().strip()
-        if keyword and keyword != 'tìm kiếm...':
-            visible = [i for i in self._all_items if keyword in i.lower()]
-        else:
+        if self._placeholder_active:
             visible = self._all_items
+        else:
+            keyword = self._search_entry.get().lower().strip()
+            visible = [i for i in self._all_items if keyword in i.lower()] if keyword else self._all_items
         for item in visible:
             if item in self._vars:
                 self._vars[item].set(val)
@@ -285,39 +405,58 @@ class App:
 
     # ── Build UI ─────────────────────────────────────────────────────────────
 
+    def _scroll_main(self, event):
+        """Scroll handler cho outer body canvas."""
+        if event.delta:
+            units = int(-1 * (event.delta / 120)) or (-1 if event.delta > 0 else 1)
+        elif event.num == 4:
+            units = -1
+        else:
+            units = 1
+        self._body_canvas.yview_scroll(units, 'units')
+
     def _build_ui(self):
         # ── Header ───────────────────────────────────────────────────────────
-        hdr = tk.Frame(self.root, bg=C['primary'])
+        hdr = tk.Frame(self.root, bg=C['hdr_top'])
         hdr.pack(fill=tk.X)
 
-        hdr_inner = tk.Frame(hdr, bg=C['primary'], padx=32, pady=20)
+        hdr_inner = tk.Frame(hdr, bg=C['hdr_top'], padx=32, pady=22)
         hdr_inner.pack(fill=tk.X)
 
-        tk.Label(hdr_inner, text='Gợi Ý Đặt Hàng',
-                 font=('Helvetica Neue', 22, 'bold'),
-                 bg=C['primary'], fg='white').pack(anchor='w')
+        title_row = tk.Frame(hdr_inner, bg=C['hdr_top'])
+        title_row.pack(anchor='w')
+        tk.Label(title_row, text='📦', font=(SANS, 22),
+                 bg=C['hdr_top'], fg='white').pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(title_row, text='Gợi Ý Đặt Hàng',
+                 font=(SANS, 24, 'bold'),
+                 bg=C['hdr_top'], fg='white').pack(side=tk.LEFT)
         tk.Label(hdr_inner,
-                 text='Phân tích dữ liệu bán hàng & tồn kho · Xuất file gợi ý đặt hàng',
-                 font=('Helvetica Neue', 11), bg=C['primary'], fg='#A8CAFF').pack(anchor='w', pady=(2, 0))
+                 text='Phân tích dữ liệu bán hàng & tồn kho  ·  Xuất file Excel gợi ý đặt hàng',
+                 font=(SANS, 12), bg=C['hdr_top'], fg='#98989F').pack(anchor='w', pady=(4, 0))
 
         # ── Scrollable body ───────────────────────────────────────────────────
         outer  = tk.Frame(self.root, bg=C['bg'])
         outer.pack(fill=tk.BOTH, expand=True)
 
         canvas = tk.Canvas(outer, bg=C['bg'], highlightthickness=0)
+        self._body_canvas = canvas
         vsb    = tk.Scrollbar(outer, orient='vertical', command=canvas.yview)
         canvas.configure(yscrollcommand=vsb.set)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        self.body = tk.Frame(canvas, bg=C['bg'], padx=28, pady=20)
+        self.body = tk.Frame(canvas, bg=C['bg'], padx=30, pady=22)
         win = canvas.create_window((0, 0), window=self.body, anchor='nw')
 
         self.body.bind('<Configure>', lambda e: canvas.configure(
             scrollregion=canvas.bbox('all')))
         canvas.bind('<Configure>', lambda e: canvas.itemconfig(win, width=e.width))
-        canvas.bind_all('<MouseWheel>', lambda e: canvas.yview_scroll(
-            int(-1 * (e.delta / 120)), 'units'))
+
+        # Chỉ bind scroll vào body frame (KHÔNG dùng bind_all để tránh conflict với FilterPanel)
+        canvas.bind('<MouseWheel>', self._scroll_main)
+        self.body.bind('<MouseWheel>', self._scroll_main)
+        canvas.bind('<Button-4>', self._scroll_main)   # Linux
+        canvas.bind('<Button-5>', self._scroll_main)
 
         self._build_body()
 
@@ -332,15 +471,15 @@ class App:
         self._file_row(body, 'File Tồn Kho', self.v_inv)
 
         btn_row = tk.Frame(body, bg=C['card'])
-        btn_row.pack(fill=tk.X, pady=(10, 0))
+        btn_row.pack(fill=tk.X, pady=(12, 0))
         self.btn_read = make_btn(btn_row, '  Đọc Files & Tải Bộ Lọc  →',
                                   self._read_files, style='green')
         self.btn_read.pack(side=tk.RIGHT)
-        card.pack(fill=tk.X, pady=(0, 12))
+        card.pack(fill=tk.X, pady=(0, 14))
 
         # ── 2. Bộ lọc Brand + Category (2 cột) ───────────────────────────────
         filter_row = tk.Frame(b, bg=C['bg'])
-        filter_row.pack(fill=tk.X, pady=(0, 12))
+        filter_row.pack(fill=tk.X, pady=(0, 14))
         filter_row.columnconfigure(0, weight=1)
         filter_row.columnconfigure(1, weight=1)
 
@@ -361,31 +500,33 @@ class App:
         row = tk.Frame(sbody, bg=C['card'])
         row.pack(fill=tk.X)
         tk.Label(row, text='Số tháng bán hàng cần tồn kho :',
-                 font=('Helvetica Neue', 11), bg=C['card'], fg=C['text']).pack(side=tk.LEFT)
+                 font=(SANS, 13), bg=C['card'], fg=C['text']).pack(side=tk.LEFT)
 
         rb_frame = tk.Frame(row, bg=C['card'])
-        rb_frame.pack(side=tk.LEFT, padx=16)
+        rb_frame.pack(side=tk.LEFT, padx=18)
         for val, lbl in [('3','3 tháng'), ('6','6 tháng'), ('9','9 tháng')]:
             tk.Radiobutton(rb_frame, text=lbl, variable=self.v_months, value=val,
-                           font=('Helvetica Neue', 11), bg=C['card'], fg=C['text'],
+                           font=(SANS, 13), bg=C['card'], fg=C['text'],
                            selectcolor=C['check_sel'], activebackground=C['card']
-                           ).pack(side=tk.LEFT, padx=10)
-        sc.pack(fill=tk.X, pady=(0, 12))
+                           ).pack(side=tk.LEFT, padx=12)
+        sc.pack(fill=tk.X, pady=(0, 14))
 
         # ── CTA button ────────────────────────────────────────────────────────
-        self.btn_run = make_btn(b, '       🚀   Tạo Gợi Ý Đặt Hàng       ',
+        self.btn_run = make_btn(b, '  🚀   Tạo Gợi Ý Đặt Hàng  ',
                                  self.run, style='primary')
-        self.btn_run.config(font=('Helvetica Neue', 13, 'bold'), pady=13)
-        self.btn_run.pack(fill=tk.X, pady=(0, 12))
+        self.btn_run.config(font=(SANS, 15, 'bold'), pady=15)
+        self.btn_run.pack(fill=tk.X, pady=(0, 14))
 
         # ── Log ───────────────────────────────────────────────────────────────
         lc, lbody = make_card(b, 'Nhật Ký')
         lbody.config(padx=0, pady=0)
-        self.log_box = tk.Text(lbody, height=8, font=('Menlo', 9),
+        self.log_box = tk.Text(lbody, height=8, font=(MONO, 10),
                                 bg=C['console_bg'], fg=C['console_fg'],
-                                padx=14, pady=8, wrap=tk.WORD, bd=0,
+                                padx=16, pady=10, wrap=tk.WORD, bd=0,
                                 insertbackground=C['console_fg'])
         self.log_box.pack(fill=tk.BOTH, expand=True)
+        # Scroll trong log box cũng cần không bắn ra ngoài
+        self.log_box.bind('<MouseWheel>', lambda e: 'break')
         lc.pack(fill=tk.X)
 
     # ── Widgets helpers ───────────────────────────────────────────────────────
@@ -394,13 +535,13 @@ class App:
         f = tk.Frame(parent, bg=C['card'])
         f.pack(fill=tk.X)
 
-        tk.Label(f, text=label, font=('Helvetica Neue', 11),
+        tk.Label(f, text=label, font=(SANS, 13),
                  bg=C['card'], fg=C['text'], width=16, anchor='w').pack(side=tk.LEFT)
 
-        entry = tk.Entry(f, textvariable=var, font=('Helvetica Neue', 10),
+        entry = tk.Entry(f, textvariable=var, font=(SANS, 11),
                          bg=C['input_bg'], fg=C['text2'], relief='flat',
                          bd=0, state='readonly', readonlybackground=C['input_bg'])
-        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 10), ipady=5)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 10), ipady=6)
 
         make_btn(f, 'Chọn File', lambda v=var: self._browse(v),
                  style='ghost', small=True).pack(side=tk.RIGHT)
@@ -430,6 +571,10 @@ class App:
         if not i:
             messagebox.showerror('Lỗi', 'Vui lòng chọn file tồn kho!'); return
 
+        popup = LoadingPopup(
+            self.root,
+            'Sếp đợi chút\nem đang tính toán,\nem biết sếp tính lóng như kem 🍦'
+        )
         try:
             self.btn_read.config(state='disabled', text='⏳  Đang đọc…')
             self.log('─── Đọc files ───')
@@ -473,6 +618,7 @@ class App:
             self.log(f'❌  {e}')
             messagebox.showerror('Lỗi đọc file', str(e))
         finally:
+            popup.close()
             self.btn_read.config(state='normal', text='  Đọc Files & Tải Bộ Lọc  →')
 
     # ── Run ───────────────────────────────────────────────────────────────────
@@ -491,6 +637,10 @@ class App:
         brand_desc = ', '.join(sel_brands) if sel_brands else 'Tất cả'
         cat_desc   = ', '.join(sel_cats)   if sel_cats   else 'Tất cả'
 
+        popup = LoadingPopup(
+            self.root,
+            'Sếp đợi em chút nha,\nem đang xử lý đây 🚀'
+        )
         try:
             self.btn_run.config(state='disabled', text='⏳   Đang xử lý…')
             self.log(f'─── Xử lý: {m} tháng · Brand: {brand_desc} · Danh mục: {cat_desc} ───')
@@ -504,7 +654,8 @@ class App:
             self.log(f'❌  {e}')
             messagebox.showerror('Lỗi xử lý', str(e))
         finally:
-            self.btn_run.config(state='normal', text='       🚀   Tạo Gợi Ý Đặt Hàng       ')
+            popup.close()
+            self.btn_run.config(state='normal', text='  🚀   Tạo Gợi Ý Đặt Hàng  ')
 
     # ── Core logic ────────────────────────────────────────────────────────────
 
