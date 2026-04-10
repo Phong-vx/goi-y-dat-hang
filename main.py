@@ -15,6 +15,11 @@ from openpyxl.utils import get_column_letter
 import os, re, platform
 from datetime import datetime
 import sys
+from PIL import Image, ImageTk
+
+# Đường dẫn logo (cùng thư mục với script)
+_DIR      = os.path.dirname(os.path.abspath(__file__))
+LOGO_PATH = os.path.join(_DIR, 'File_template', 'Bluecircle.png')
 
 # ─── Font detection (SF Pro trên macOS, Helvetica Neue fallback) ──────────────
 IS_MAC = platform.system() == 'Darwin'
@@ -423,10 +428,23 @@ class App:
         hdr_inner = tk.Frame(hdr, bg=C['hdr_top'], padx=32, pady=22)
         hdr_inner.pack(fill=tk.X)
 
+        # Logo bên phải
+        try:
+            pil_img = Image.open(LOGO_PATH).convert('RGBA')
+            logo_h  = 52
+            logo_w  = int(pil_img.width * logo_h / pil_img.height)
+            pil_img = pil_img.resize((logo_w, logo_h), Image.LANCZOS)
+            # Ghép lên nền tối để alpha không bị vỡ
+            bg_img  = Image.new('RGBA', (logo_w, logo_h), C['hdr_top'])
+            bg_img.paste(pil_img, mask=pil_img.split()[3])
+            self._logo_img = ImageTk.PhotoImage(bg_img.convert('RGB'))
+            tk.Label(hdr_inner, image=self._logo_img,
+                     bg=C['hdr_top']).pack(side=tk.RIGHT, anchor='center')
+        except Exception:
+            pass   # Nếu không tìm thấy ảnh thì bỏ qua
+
         title_row = tk.Frame(hdr_inner, bg=C['hdr_top'])
         title_row.pack(anchor='w')
-        tk.Label(title_row, text='📦', font=(SANS, 22),
-                 bg=C['hdr_top'], fg='white').pack(side=tk.LEFT, padx=(0, 10))
         tk.Label(title_row, text='Gợi Ý Đặt Hàng',
                  font=(SANS, 24, 'bold'),
                  bg=C['hdr_top'], fg='white').pack(side=tk.LEFT)
