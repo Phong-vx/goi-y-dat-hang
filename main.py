@@ -107,23 +107,41 @@ def make_btn(parent, text, command, style='primary', small=False):
 
 class FilterPanel(tk.Frame):
     """
-    Scrollable checkbox panel.
+    Scrollable checkbox panel với ô tìm kiếm.
     Không chọn gì = không lọc (lấy tất cả).
     """
     def __init__(self, parent, **kw):
         super().__init__(parent, bg=C['card'], **kw)
         self._vars: dict[str, tk.BooleanVar] = {}
+        self._all_items: list = []
         self._widgets: list = []
+        self._search_var = tk.StringVar()
+        self._search_var.trace_add('write', lambda *_: self._apply_search())
         self._build()
 
     def _build(self):
+        # Ô tìm kiếm
+        search_wrap = tk.Frame(self, bg=C['border'], padx=1, pady=1)
+        search_wrap.pack(fill=tk.X, pady=(0, 6))
+        search_inner = tk.Frame(search_wrap, bg=C['input_bg'])
+        search_inner.pack(fill=tk.X)
+        tk.Label(search_inner, text='🔍', font=('Helvetica Neue', 10),
+                 bg=C['input_bg'], fg=C['text2']).pack(side=tk.LEFT, padx=(8, 2))
+        self._search_entry = tk.Entry(
+            search_inner, textvariable=self._search_var,
+            font=('Helvetica Neue', 10), bg=C['input_bg'], fg=C['text'],
+            relief='flat', bd=0, insertbackground=C['primary'])
+        self._search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6, padx=(0, 8))
+        self._search_entry.insert(0, 'Tìm kiếm...')
+        self._search_entry.config(fg=C['text2'])
+        self._search_entry.bind('<FocusIn>',  self._on_search_focus_in)
+        self._search_entry.bind('<FocusOut>', self._on_search_focus_out)
+
         # Toolbar
         tb = tk.Frame(self, bg=C['card'])
         tb.pack(fill=tk.X, pady=(0, 6))
-
-        make_btn(tb, '✓ Tất Cả', lambda: self._set_all(True),  style='ghost', small=True).pack(side=tk.LEFT, padx=(0, 6))
+        make_btn(tb, '✓ Tất Cả',  lambda: self._set_all(True),  style='ghost',   small=True).pack(side=tk.LEFT, padx=(0, 6))
         make_btn(tb, '✕ Bỏ Chọn', lambda: self._set_all(False), style='neutral', small=True).pack(side=tk.LEFT)
-
         self.lbl_count = tk.Label(tb, text='—  chưa tải', font=('Helvetica Neue', 9),
                                    bg=C['card'], fg=C['text2'])
         self.lbl_count.pack(side=tk.RIGHT)
@@ -150,25 +168,45 @@ class FilterPanel(tk.Frame):
         self._canvas.bind('<MouseWheel>', lambda e: self._canvas.yview_scroll(
             int(-1 * (e.delta / 120)), 'units'))
 
-        # Placeholder
-        self._ph = tk.Label(self._inner,
-                             text='Nhấn  "Đọc Files"  để tải danh sách',
-                             font=('Helvetica Neue', 9, 'italic'),
-                             bg=C['card'], fg=C['text2'], pady=24)
-        self._ph.pack()
+        tk.Label(self._inner, text='Nhấn  "Đọc Files"  để tải danh sách',
+                 font=('Helvetica Neue', 9, 'italic'),
+                 bg=C['card'], fg=C['text2'], pady=24).pack()
 
-    def populate(self, items: list):
+    def _on_search_focus_in(self, e):
+        if self._search_entry.get() == 'Tìm kiếm...':
+            self._search_entry.delete(0, tk.END)
+            self._search_entry.config(fg=C['text'])
+
+    def _on_search_focus_out(self, e):
+        if not self._search_entry.get():
+            self._search_entry.insert(0, 'Tìm kiếm...')
+            self._search_entry.config(fg=C['text2'])
+
+    def _apply_search(self):
+        keyword = self._search_var.get().lower().strip()
+        if keyword == 'tìm kiếm...':
+            keyword = ''
+        filtered = [i for i in self._all_items if keyword in i.lower()] if keyword else self._all_items
+        self._render(filtered)
+
+    def _render(self, items: list):
+        """Vẽ lại checkbox list theo danh sách items (giữ nguyên trạng thái tick)."""
         for w in self._inner.winfo_children():
             w.destroy()
-        self._vars.clear()
         self._widgets.clear()
+
+        if not items:
+            tk.Label(self._inner, text='Không tìm thấy kết quả',
+                     font=('Helvetica Neue', 9, 'italic'),
+                     bg=C['card'], fg=C['text2'], pady=16).pack()
+            return
 
         cols = 2
         for idx, item in enumerate(items):
-            var = tk.BooleanVar(value=False)  # mặc định KHÔNG chọn = không lọc
-            self._vars[item] = var
+            if item not in self._vars:
+                self._vars[item] = tk.BooleanVar(value=False)
             cb = tk.Checkbutton(
-                self._inner, text=item, variable=var,
+                self._inner, text=item, variable=self._vars[item],
                 font=('Helvetica Neue', 10), bg=C['card'], fg=C['text'],
                 selectcolor=C['check_sel'], activebackground=C['card'],
                 anchor='w', command=self._update_count,
@@ -180,11 +218,29 @@ class FilterPanel(tk.Frame):
         for c in range(cols):
             self._inner.columnconfigure(c, weight=1)
 
+    def populate(self, items: list):
+        self._all_items = items
+        self._vars.clear()
+        self._widgets.clear()
+        # Reset ô tìm kiếm
+        self._search_var.set('')
+        self._search_entry.delete(0, tk.END)
+        self._search_entry.insert(0, 'Tìm kiếm...')
+        self._search_entry.config(fg=C['text2'])
+
+        self._render(items)
         self._update_count()
 
     def _set_all(self, val: bool):
-        for v in self._vars.values():
-            v.set(val)
+        # Chỉ áp dụng cho items đang hiển thị (sau filter tìm kiếm)
+        keyword = self._search_var.get().lower().strip()
+        if keyword and keyword != 'tìm kiếm...':
+            visible = [i for i in self._all_items if keyword in i.lower()]
+        else:
+            visible = self._all_items
+        for item in visible:
+            if item in self._vars:
+                self._vars[item].set(val)
         self._update_count()
 
     def _update_count(self):
