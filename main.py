@@ -504,7 +504,8 @@ class App:
 
         rb_frame = tk.Frame(row, bg=C['card'])
         rb_frame.pack(side=tk.LEFT, padx=18)
-        for val, lbl in [('3','3 tháng'), ('6','6 tháng'), ('9','9 tháng')]:
+        for val, lbl in [('3','3 tháng'), ('6','6 tháng'), ('9','9 tháng'),
+                         ('12','12 tháng'), ('18','18 tháng'), ('24','24 tháng')]:
             tk.Radiobutton(rb_frame, text=lbl, variable=self.v_months, value=val,
                            font=(SANS, 13), bg=C['card'], fg=C['text'],
                            selectcolor=C['check_sel'], activebackground=C['card']
