@@ -40,12 +40,13 @@ C = {
 }
 
 SALES = {
-    'sku':      'SKU',
-    'name':     'Product Item',
-    'brand':    'Brand',
-    'category': 'Category',
-    'date':     'Date',
-    'qty':      'Quantity',
+    'sku':       'SKU',
+    'name':      'Product Item',
+    'brand':     'Brand',
+    'category':  'Category',
+    'date':      'Date',
+    'qty':       'Quantity',
+    'sale_team': 'Sale Team',
 }
 INV = {
     'sku':          'Sản phẩm/Mã nội bộ',
@@ -594,8 +595,31 @@ class App:
         result['Tổng 6T Gần Nhất'] = result[last6].sum(axis=1)
         result['TB Tháng (6T GN)'] = (result['Tổng 6T Gần Nhất'] / len(last6)).round(0)
 
-        # Lưu year_stat_cols vào result để _export dùng
+        # Tổng bán theo Sale Team
+        team_labels = []
+        if SALES['sale_team'] in sales.columns:
+            team_agg = (
+                sales.groupby([SALES['sku'], SALES['sale_team']])[SALES['qty']]
+                .sum().reset_index()
+            )
+            team_agg['SKU'] = team_agg[SALES['sku']].astype(str).str.strip()
+            teams = sorted(team_agg[SALES['sale_team']].dropna().unique())
+
+            team_wide = team_agg.pivot_table(
+                index='SKU', columns=SALES['sale_team'],
+                values=SALES['qty'], fill_value=0
+            ).reset_index()
+            team_wide.columns.name = None
+            team_labels = [c for c in team_wide.columns if c != 'SKU']
+
+            result = result.merge(team_wide, on='SKU', how='left')
+            for tl in team_labels:
+                result[tl] = result[tl].fillna(0)
+
+            self.log(f'   Sale Team: {", ".join(str(t) for t in teams)}')
+
         result.attrs['year_stat_cols'] = year_stat_cols
+        result.attrs['team_labels']    = team_labels
 
         # 6. Tồn kho
         self.log('📦  Đọc file tồn kho…')
@@ -644,7 +668,9 @@ class App:
         ordered = (['SKU', 'Tên Sản Phẩm', 'Brand', 'Category']
                    + mlabels
                    + year_stat_cols
-                   + ['Tổng Toàn TG', 'Tổng 6T Gần Nhất', 'TB Tháng (6T GN)']
+                   + ['Tổng Toàn TG']
+                   + team_labels
+                   + ['Tổng 6T Gần Nhất', 'TB Tháng (6T GN)']
                    + inv_out
                    + [scol])
         result = result[[c for c in ordered if c in result.columns]].fillna(0)
@@ -688,6 +714,7 @@ class App:
         year_total_cols = [c for c in cols if re.match(r'^Tổng \d{4}$', c)]
         year_avg_cols   = [c for c in cols if re.match(r'^TB \d{4}$', c)]
         grand_col       = 'Tổng Toàn TG'
+        team_cols       = df.attrs.get('team_labels', [])
 
         # ── Màu header theo nhóm ──────────────────────────────────────────────
         # (bg_header, fg_header, fill_odd, fill_even)
@@ -697,6 +724,7 @@ class App:
             'yr_total': ('6D28D9', 'FFFFFF', 'F5F3FF',  'EDE9FE'),
             'yr_avg':   ('7C3AED', 'FFFFFF', 'FAF5FF',  'F3E8FF'),
             'grand':    ('4C1D95', 'FFFFFF', 'EDE9FE',  'DDD6FE'),
+            'team':     ('0F766E', 'FFFFFF', 'F0FDFA',  'CCFBF1'),
             'stat6':    ('0369A1', 'FFFFFF', 'E0F2FE',  'BAE6FD'),
             'inv':      ('B45309', 'FFFFFF', 'FFFBEB',  'FEF3C7'),
             'suggest':  ('065F46', 'FFFFFF', 'ECFDF5',  'D1FAE5'),
@@ -708,6 +736,7 @@ class App:
             if c in year_total_cols:return 'yr_total'
             if c in year_avg_cols:  return 'yr_avg'
             if c == grand_col:      return 'grand'
+            if c in team_cols:      return 'team'
             if c in stat6_cols:     return 'stat6'
             if c in inv_cols:       return 'inv'
             if c == scol:           return 'suggest'
@@ -754,7 +783,7 @@ class App:
                 elif g == 'month':
                     cell.font      = Font(name='Calibri', size=10)
                     cell.alignment = ctr
-                elif g in ('yr_total', 'grand'):
+                elif g in ('yr_total', 'grand', 'team'):
                     cell.font      = Font(name='Calibri', bold=True, size=10)
                     cell.alignment = rgt
                 elif g == 'yr_avg':
@@ -780,6 +809,8 @@ class App:
         }
         for c in year_total_cols + year_avg_cols:
             W[c] = 13
+        for c in team_cols:
+            W[c] = 16
 
         for ci, col in enumerate(cols, 1):
             ws.column_dimensions[get_column_letter(ci)].width = W.get(
