@@ -19,10 +19,19 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install pandas openpyxl pyinstaller
+        run: pip install pandas openpyxl Pillow pyinstaller
 
       - name: Build EXE
-        run: pyinstaller --onefile --windowed --name "GoiYDatHang" main.py
+        run: >
+          pyinstaller --onefile --windowed --name "GoiYDatHang"
+          --hidden-import PIL
+          --hidden-import PIL.Image
+          --hidden-import PIL.ImageTk
+          --hidden-import PIL._imagingtk
+          --hidden-import PIL.BmpImagePlugin
+          --hidden-import PIL.PngImagePlugin
+          --add-data "File_template/Bluecircle.png;File_template"
+          main.py
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4

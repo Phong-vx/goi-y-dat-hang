@@ -17,8 +17,11 @@ from datetime import datetime
 import sys
 from PIL import Image, ImageTk
 
-# Đường dẫn logo (cùng thư mục với script)
-_DIR      = os.path.dirname(os.path.abspath(__file__))
+# Đường dẫn logo — dùng sys._MEIPASS khi chạy từ PyInstaller exe
+if getattr(sys, 'frozen', False):
+    _DIR = sys._MEIPASS
+else:
+    _DIR = os.path.dirname(os.path.abspath(__file__))
 LOGO_PATH = os.path.join(_DIR, 'File_template', 'Bluecircle.png')
 
 # ─── Font detection (SF Pro trên macOS, Helvetica Neue fallback) ──────────────
