@@ -39,7 +39,7 @@ if %errorlevel% neq 0 (
 )
 
 echo  [2/3] Dang build file .exe (cho 1-2 phut)...
-%PYTHON% -m PyInstaller --onefile --windowed --name "GoiYDatHang" --clean main.py > nul 2>&1
+%PYTHON% -m PyInstaller --onefile --windowed --name "GoiYDatHang" --clean --hidden-import PIL --hidden-import PIL.Image --hidden-import PIL.ImageTk --hidden-import PIL._imagingtk main.py > nul 2>&1
 if %errorlevel% neq 0 (
     echo  LOI: Build that bai.
     pause & exit /b
