@@ -571,14 +571,31 @@ class App:
             if ml not in result.columns:
                 result[ml] = 0
 
-        n  = len(mlabels)
         md = result[mlabels].fillna(0)
-        result['Tổng Năm']         = md.sum(axis=1)
-        result['TB Quý']           = (result['Tổng Năm'] / 4).round(0)
-        result['TB Tháng (Năm)']   = (result['Tổng Năm'] / n).round(0)
-        last6 = mlabels[-6:] if n >= 6 else mlabels
+
+        # Nhóm tháng theo năm → Tổng YYYY + TB YYYY
+        from collections import defaultdict
+        year_months_map = defaultdict(list)
+        for ml in mlabels:
+            year = ml.split('/')[1]
+            year_months_map[year].append(ml)
+
+        sorted_years  = sorted(year_months_map.keys())
+        year_stat_cols = []
+        for year in sorted_years:
+            ycols = year_months_map[year]
+            result[f'Tổng {year}']  = result[ycols].sum(axis=1)
+            result[f'TB {year}']    = (result[f'Tổng {year}'] / len(ycols)).round(0)
+            year_stat_cols.extend([f'Tổng {year}', f'TB {year}'])
+
+        result['Tổng Toàn TG'] = md.sum(axis=1)
+
+        last6 = mlabels[-6:] if len(mlabels) >= 6 else mlabels
         result['Tổng 6T Gần Nhất'] = result[last6].sum(axis=1)
         result['TB Tháng (6T GN)'] = (result['Tổng 6T Gần Nhất'] / len(last6)).round(0)
+
+        # Lưu year_stat_cols vào result để _export dùng
+        result.attrs['year_stat_cols'] = year_stat_cols
 
         # 6. Tồn kho
         self.log('📦  Đọc file tồn kho…')
@@ -622,7 +639,15 @@ class App:
         scol   = f'Gợi Ý Đặt Hàng ({months} Tháng)'
         result[scol] = (needed - result['Tồn Khả Dụng']).clip(lower=0).round(0)
 
-        result = result.fillna(0)
+        # Sắp xếp lại thứ tự cột
+        inv_out = [c for c in ['Tồn Kho (Số Lượng)', 'Tồn Bảo Lưu', 'Tồn Khả Dụng'] if c in result.columns]
+        ordered = (['SKU', 'Tên Sản Phẩm', 'Brand', 'Category']
+                   + mlabels
+                   + year_stat_cols
+                   + ['Tổng Toàn TG', 'Tổng 6T Gần Nhất', 'TB Tháng (6T GN)']
+                   + inv_out
+                   + [scol])
+        result = result[[c for c in ordered if c in result.columns]].fillna(0)
         self.log(f'✅  {len(result):,} SKU')
         return result
 
@@ -644,9 +669,8 @@ class App:
         if sel_brands:
             tag_parts.append('_'.join(sel_brands[:2]) + (f'+{len(sel_brands)-2}' if len(sel_brands) > 2 else ''))
         if sel_cats:
-            tag_parts.append('_'.join(sel_cats[:2])   + (f'+{len(sel_cats)-2}'   if len(sel_cats)   > 2 else ''))
+            tag_parts.append('_'.join(sel_cats[:2]) + (f'+{len(sel_cats)-2}' if len(sel_cats) > 2 else ''))
         tag = ('_' + '_'.join(tag_parts)) if tag_parts else '_TatCa'
-
         out = os.path.join(desktop, f'GoiYDatHang_{months}T{tag}_{ts}.xlsx')
 
         wb = openpyxl.Workbook()
@@ -657,74 +681,117 @@ class App:
         scol       = f'Gợi Ý Đặt Hàng ({months} Tháng)'
         fixed      = ['SKU', 'Tên Sản Phẩm', 'Brand', 'Category']
         month_cols = [c for c in cols if re.match(r'^Th\.\d{1,2}/\d{4}$', c)]
-        calc_cols  = ['Tổng Năm', 'TB Quý', 'TB Tháng (Năm)', 'Tổng 6T Gần Nhất', 'TB Tháng (6T GN)']
+        inv_cols   = ['Tồn Kho (Số Lượng)', 'Tồn Bảo Lưu', 'Tồn Khả Dụng']
+        stat6_cols = ['Tổng 6T Gần Nhất', 'TB Tháng (6T GN)']
 
-        HDR  = {'fixed':('1A56DB','FFFFFF'), 'month':('2563EB','FFFFFF'),
-                'calc': ('7C3AED','FFFFFF'), 'inv':  ('D97706','FFFFFF'), 'suggest':('059669','FFFFFF')}
-        FILL = {'month':'EFF6FF', 'calc':'F5F3FF', 'inv':'FFFBEB', 'suggest':'ECFDF5'}
+        # Detect year stat columns  (Tổng YYYY / TB YYYY / Tổng Toàn TG)
+        year_total_cols = [c for c in cols if re.match(r'^Tổng \d{4}$', c)]
+        year_avg_cols   = [c for c in cols if re.match(r'^TB \d{4}$', c)]
+        grand_col       = 'Tổng Toàn TG'
 
-        inv_cols = ['Tồn Kho (Số Lượng)', 'Tồn Bảo Lưu', 'Tồn Khả Dụng']
+        # ── Màu header theo nhóm ──────────────────────────────────────────────
+        # (bg_header, fg_header, fill_odd, fill_even)
+        GRP_STYLE = {
+            'fixed':    ('1A56DB', 'FFFFFF', 'FFFFFF',  'F0F4FF'),
+            'month':    ('2563EB', 'FFFFFF', 'EFF6FF',  'DBEAFE'),
+            'yr_total': ('6D28D9', 'FFFFFF', 'F5F3FF',  'EDE9FE'),
+            'yr_avg':   ('7C3AED', 'FFFFFF', 'FAF5FF',  'F3E8FF'),
+            'grand':    ('4C1D95', 'FFFFFF', 'EDE9FE',  'DDD6FE'),
+            'stat6':    ('0369A1', 'FFFFFF', 'E0F2FE',  'BAE6FD'),
+            'inv':      ('B45309', 'FFFFFF', 'FFFBEB',  'FEF3C7'),
+            'suggest':  ('065F46', 'FFFFFF', 'ECFDF5',  'D1FAE5'),
+        }
 
         def grp(c):
-            if c in fixed:      return 'fixed'
-            if c in month_cols: return 'month'
-            if c in calc_cols:  return 'calc'
-            if c in inv_cols:   return 'inv'
-            if c == scol:       return 'suggest'
+            if c in fixed:          return 'fixed'
+            if c in month_cols:     return 'month'
+            if c in year_total_cols:return 'yr_total'
+            if c in year_avg_cols:  return 'yr_avg'
+            if c == grand_col:      return 'grand'
+            if c in stat6_cols:     return 'stat6'
+            if c in inv_cols:       return 'inv'
+            if c == scol:           return 'suggest'
             return 'fixed'
 
-        thin = Border(*(Side(style='thin', color='CBD5E0'),)*4)
-        thin = Border(left=Side(style='thin',color='CBD5E0'),right=Side(style='thin',color='CBD5E0'),
-                      top=Side(style='thin',color='CBD5E0'), bottom=Side(style='thin',color='CBD5E0'))
+        thin = Border(
+            left=Side(style='thin',  color='D1D5DB'),
+            right=Side(style='thin', color='D1D5DB'),
+            top=Side(style='thin',   color='D1D5DB'),
+            bottom=Side(style='thin',color='D1D5DB'),
+        )
         ctr = Alignment(horizontal='center', vertical='center', wrap_text=True)
         lft = Alignment(horizontal='left',   vertical='center')
         rgt = Alignment(horizontal='right',  vertical='center')
 
+        # ── Header row ────────────────────────────────────────────────────────
         for ci, col in enumerate(cols, 1):
-            bg, fg = HDR[grp(col)]
+            st = GRP_STYLE[grp(col)]
             cell = ws.cell(row=1, column=ci, value=col)
-            cell.font = Font(name='Arial', bold=True, color=fg, size=10)
-            cell.fill = PatternFill('solid', fgColor=bg)
-            cell.alignment = ctr; cell.border = thin
-        ws.row_dimensions[1].height = 40
+            cell.font      = Font(name='Calibri', bold=True, color=st[1], size=10)
+            cell.fill      = PatternFill('solid', fgColor=st[0])
+            cell.alignment = ctr
+            cell.border    = thin
+        ws.row_dimensions[1].height = 38
 
+        # ── Data rows với màu xen kẽ ──────────────────────────────────────────
         for ri, (_, row) in enumerate(df.iterrows(), start=2):
+            is_odd = (ri % 2 == 0)   # hàng chẵn (dữ liệu lẻ) = nền nhạt hơn
             for ci, col in enumerate(cols, 1):
                 val = row[col]
-                if pd.isna(val): val = 0
+                if pd.isna(val):     val = 0
                 elif isinstance(val, float) and val.is_integer(): val = int(val)
-                cell = ws.cell(row=ri, column=ci, value=val)
+
+                cell        = ws.cell(row=ri, column=ci, value=val)
                 cell.border = thin
-                g = grp(col)
-                if g == 'month':
-                    cell.fill = PatternFill('solid', fgColor=FILL['month'])
-                    cell.font = Font(name='Arial', size=10); cell.alignment = ctr
-                elif g == 'calc':
-                    cell.fill = PatternFill('solid', fgColor=FILL['calc'])
-                    cell.font = Font(name='Arial', bold=True, size=10); cell.alignment = rgt
-                elif g == 'inv':
-                    cell.fill = PatternFill('solid', fgColor=FILL['inv'])
-                    cell.font = Font(name='Arial', bold=True, size=10); cell.alignment = ctr
-                elif g == 'suggest':
-                    cell.fill = PatternFill('solid', fgColor=FILL['suggest'])
-                    cell.font = Font(name='Arial', bold=True, color='065F46', size=10)
+                g  = grp(col)
+                st = GRP_STYLE[g]
+                fill_color  = st[2] if is_odd else st[3]
+                cell.fill   = PatternFill('solid', fgColor=fill_color)
+
+                if g == 'fixed':
+                    cell.font      = Font(name='Calibri', size=10)
+                    cell.alignment = ctr if col == 'SKU' else lft
+                elif g == 'month':
+                    cell.font      = Font(name='Calibri', size=10)
                     cell.alignment = ctr
-                elif col == 'SKU':
-                    cell.font = Font(name='Arial', size=10); cell.alignment = ctr
-                else:
-                    cell.font = Font(name='Arial', size=10); cell.alignment = lft
+                elif g in ('yr_total', 'grand'):
+                    cell.font      = Font(name='Calibri', bold=True, size=10)
+                    cell.alignment = rgt
+                elif g == 'yr_avg':
+                    cell.font      = Font(name='Calibri', size=10, italic=True)
+                    cell.alignment = rgt
+                elif g == 'stat6':
+                    cell.font      = Font(name='Calibri', bold=True, size=10)
+                    cell.alignment = rgt
+                elif g == 'inv':
+                    cell.font      = Font(name='Calibri', bold=True, size=10)
+                    cell.alignment = ctr
+                elif g == 'suggest':
+                    cell.font      = Font(name='Calibri', bold=True, size=11)
+                    cell.alignment = ctr
             ws.row_dimensions[ri].height = 18
 
-        W = {'SKU':18,'Tên Sản Phẩm':40,'Brand':16,'Category':20,
-             'Tổng Năm':13,'TB Quý':11,'TB Tháng (Năm)':15,
-             'Tổng 6T Gần Nhất':17,'TB Tháng (6T GN)':17,
-             'Tồn Kho (Số Lượng)':18,'Tồn Bảo Lưu':14,'Tồn Khả Dụng':15,
-             scol:24}
-        for ci, col in enumerate(cols, 1):
-            ws.column_dimensions[get_column_letter(ci)].width = W.get(col, 11 if col in month_cols else 14)
+        # ── Độ rộng cột ───────────────────────────────────────────────────────
+        W = {
+            'SKU': 18, 'Tên Sản Phẩm': 42, 'Brand': 14, 'Category': 18,
+            grand_col: 16, 'Tổng 6T Gần Nhất': 16, 'TB Tháng (6T GN)': 16,
+            'Tồn Kho (Số Lượng)': 17, 'Tồn Bảo Lưu': 13, 'Tồn Khả Dụng': 14,
+            scol: 24,
+        }
+        for c in year_total_cols + year_avg_cols:
+            W[c] = 13
 
+        for ci, col in enumerate(cols, 1):
+            ws.column_dimensions[get_column_letter(ci)].width = W.get(
+                col, 10 if col in month_cols else 14)
+
+        # ── Freeze + filter ───────────────────────────────────────────────────
         ws.freeze_panes = 'C2'
         ws.auto_filter.ref = f'A1:{get_column_letter(len(cols))}1'
+
+        # ── Tab màu ───────────────────────────────────────────────────────────
+        ws.sheet_properties.tabColor = '0071E3'
+
         wb.save(out)
         self.log(f'   → {os.path.basename(out)}')
         return out
