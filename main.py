@@ -48,6 +48,7 @@ SALES = {
     'qty':       'Quantity',
     'sale_team': 'Sale Team',
     'revenue':   'Revenue',
+    'model':     'Model',
 }
 INV = {
     'sku':          'Sản phẩm/Mã nội bộ',
@@ -542,11 +543,13 @@ class App:
         self.log(f'   {len(sales):,} giao dịch  ·  {sales["_month"].nunique()} tháng  ·  {sales[SALES["sku"]].nunique():,} SKU')
 
         # 3. Thông tin sản phẩm
-        prod_info = (
-            sales[[SALES['sku'], SALES['name'], SALES['brand'], SALES['category']]]
+        has_model   = SALES['model'] in sales.columns
+        extra_cols  = [SALES['model']] if has_model else []
+        prod_info   = (
+            sales[[SALES['sku'], SALES['name'], SALES['brand'], SALES['category']] + extra_cols]
             .drop_duplicates(subset=[SALES['sku']], keep='first').copy()
         )
-        prod_info.columns = ['SKU', 'Tên Sản Phẩm', 'Brand', 'Category']
+        prod_info.columns = ['SKU', 'Tên Sản Phẩm', 'Brand', 'Category'] + (['Model'] if has_model else [])
         prod_info['Tên Sản Phẩm'] = prod_info['Tên Sản Phẩm'].apply(strip_sku_prefix)
         prod_info['SKU'] = prod_info['SKU'].astype(str).str.strip()
 
@@ -679,8 +682,9 @@ class App:
 
         # Sắp xếp lại thứ tự cột
         inv_out = [c for c in ['Tồn Kho (Số Lượng)', 'Tồn Bảo Lưu', 'Tồn Khả Dụng'] if c in result.columns]
-        rev_out = ['Doanh Thu Tổng'] if has_revenue else []
-        ordered = (['SKU', 'Tên Sản Phẩm', 'Brand', 'Category']
+        rev_out    = ['Doanh Thu Tổng'] if has_revenue else []
+        model_out  = ['Model'] if has_model else []
+        ordered = (['SKU', 'Tên Sản Phẩm', 'Brand', 'Category'] + model_out
                    + mlabels
                    + year_stat_cols
                    + ['Tổng Toàn TG']
@@ -721,10 +725,12 @@ class App:
 
         cols       = list(df.columns)
         scol       = f'Gợi Ý Đặt Hàng ({months} Tháng)'
-        fixed      = ['SKU', 'Tên Sản Phẩm', 'Brand', 'Category']
+        fixed      = ['SKU', 'Tên Sản Phẩm', 'Brand', 'Category', 'Model']
         month_cols = [c for c in cols if re.match(r'^Th\.\d{1,2}/\d{4}$', c)]
         inv_cols   = ['Tồn Kho (Số Lượng)', 'Tồn Bảo Lưu', 'Tồn Khả Dụng']
         stat6_cols = ['Tổng 6T Gần Nhất', 'TB Tháng (6T GN)']
+        # Cột không nên SUBTOTAL (text hoặc trung bình)
+        NOT_SUM    = set(fixed) | {c for c in cols if c.startswith('TB ')}
 
         # Detect year stat columns  (Tổng YYYY / TB YYYY / Tổng Toàn TG)
         year_total_cols = [c for c in cols if re.match(r'^Tổng \d{4}$', c)]
@@ -770,18 +776,39 @@ class App:
         lft = Alignment(horizontal='left',   vertical='center')
         rgt = Alignment(horizontal='right',  vertical='center')
 
-        # ── Header row ────────────────────────────────────────────────────────
+        # ── Row 1: Subtotal ───────────────────────────────────────────────────
+        for ci, col in enumerate(cols, 1):
+            st        = GRP_STYLE[grp(col)]
+            cell      = ws.cell(row=1, column=ci)
+            col_ltr   = get_column_letter(ci)
+            cell.fill   = PatternFill('solid', fgColor=st[0])
+            cell.border = thin
+
+            if col in NOT_SUM:
+                cell.value     = 'SUBTOTAL' if ci == 1 else None
+                cell.font      = Font(name='Calibri', bold=True, color=st[1], size=10)
+                cell.alignment = ctr
+            else:
+                cell.value     = f'=SUBTOTAL(9,{col_ltr}3:{col_ltr}1048576)'
+                cell.font      = Font(name='Calibri', bold=True, color=st[1], size=10)
+                cell.alignment = rgt
+                if col == 'Doanh Thu Tổng':
+                    cell.number_format = '#,##0'
+
+        ws.row_dimensions[1].height = 26
+
+        # ── Row 2: Header ─────────────────────────────────────────────────────
         for ci, col in enumerate(cols, 1):
             st = GRP_STYLE[grp(col)]
-            cell = ws.cell(row=1, column=ci, value=col)
+            cell = ws.cell(row=2, column=ci, value=col)
             cell.font      = Font(name='Calibri', bold=True, color=st[1], size=10)
             cell.fill      = PatternFill('solid', fgColor=st[0])
             cell.alignment = ctr
             cell.border    = thin
-        ws.row_dimensions[1].height = 38
+        ws.row_dimensions[2].height = 38
 
-        # ── Data rows với màu xen kẽ ──────────────────────────────────────────
-        for ri, (_, row) in enumerate(df.iterrows(), start=2):
+        # ── Data rows với màu xen kẽ (bắt đầu từ row 3) ─────────────────────
+        for ri, (_, row) in enumerate(df.iterrows(), start=3):
             is_odd = (ri % 2 == 0)   # hàng chẵn (dữ liệu lẻ) = nền nhạt hơn
             for ci, col in enumerate(cols, 1):
                 val = row[col]
@@ -840,8 +867,8 @@ class App:
                 col, 10 if col in month_cols else 14)
 
         # ── Freeze + filter ───────────────────────────────────────────────────
-        ws.freeze_panes = 'C2'
-        ws.auto_filter.ref = f'A1:{get_column_letter(len(cols))}1'
+        ws.freeze_panes = 'C3'   # cố định 2 dòng đầu + cột A, B
+        ws.auto_filter.ref = f'A2:{get_column_letter(len(cols))}2'
 
         # ── Tab màu ───────────────────────────────────────────────────────────
         ws.sheet_properties.tabColor = '0071E3'
