@@ -48,10 +48,11 @@ SALES = {
     'qty':      'Quantity',
 }
 INV = {
-    'sku':      'Sản phẩm/Mã nội bộ',
-    'qty':      'Số lượng',
-    'brand':    'Sản phẩm/Brand/Display Name',
-    'category': 'Sản phẩm/Nganh Hang/Name',
+    'sku':          'Sản phẩm/Mã nội bộ',
+    'qty':          'Số lượng',
+    'qty_reserved': 'Số lượng bảo lưu',
+    'brand':        'Sản phẩm/Brand/Display Name',
+    'category':     'Sản phẩm/Nganh Hang/Name',
 }
 
 
@@ -498,7 +499,7 @@ class App:
         monthly['SKU'] = monthly['SKU'].astype(str).str.strip()
 
         all_months = sorted(monthly['Month'].unique())
-        use_months = all_months[-12:] if len(all_months) > 12 else all_months
+        use_months = all_months   # lấy tất cả tháng có trong file
         monthly    = monthly[monthly['Month'].isin(use_months)]
 
         pivot = monthly.pivot_table(index='SKU', columns='Month',
@@ -530,24 +531,40 @@ class App:
         self._check_cols(inv, [INV['sku'], INV['qty']], 'file tồn kho')
         inv[INV['qty']] = pd.to_numeric(inv[INV['qty']], errors='coerce').fillna(0)
 
+        has_reserved = INV['qty_reserved'] in inv.columns
+        if has_reserved:
+            inv[INV['qty_reserved']] = pd.to_numeric(inv[INV['qty_reserved']], errors='coerce').fillna(0)
+
         inv_f = inv.copy()
         if sel_brands and INV['brand'] in inv_f.columns:
             inv_f = inv_f[inv_f[INV['brand']].astype(str).str.strip().isin(sel_brands)]
-        if sel_cats and INV['category'] in inv_f.columns:
-            inv_f = inv_f[inv_f[INV['category']].astype(str).str.strip().isin(sel_cats)]
 
-        inv_agg = (inv_f.groupby(INV['sku'])[INV['qty']].sum().reset_index())
-        inv_agg.columns = ['SKU', 'Tồn Kho Hiện Tại']
-        inv_agg['SKU']  = inv_agg['SKU'].astype(str).str.strip()
-        self.log(f'   {inv_agg["SKU"].nunique():,} SKU  ·  Tổng tồn: {inv_agg["Tồn Kho Hiện Tại"].sum():,.0f}')
+        # Aggregate: Số lượng + Số lượng bảo lưu
+        agg_cols = {INV['qty']: 'sum'}
+        if has_reserved:
+            agg_cols[INV['qty_reserved']] = 'sum'
+
+        inv_agg = inv_f.groupby(INV['sku']).agg(agg_cols).reset_index()
+        inv_agg.columns = ['SKU', 'Tồn Kho (Số Lượng)'] + (['Tồn Bảo Lưu'] if has_reserved else [])
+        inv_agg['SKU'] = inv_agg['SKU'].astype(str).str.strip()
+
+        if has_reserved:
+            inv_agg['Tồn Khả Dụng'] = (inv_agg['Tồn Kho (Số Lượng)'] - inv_agg['Tồn Bảo Lưu']).clip(lower=0)
+        else:
+            inv_agg['Tồn Khả Dụng'] = inv_agg['Tồn Kho (Số Lượng)']
+
+        self.log(f'   {inv_agg["SKU"].nunique():,} SKU  ·  Tổng tồn: {inv_agg["Tồn Kho (Số Lượng)"].sum():,.0f}  ·  Bảo lưu: {inv_agg["Tồn Bảo Lưu"].sum():,.0f}' if has_reserved else
+                 f'   {inv_agg["SKU"].nunique():,} SKU  ·  Tổng tồn: {inv_agg["Tồn Kho (Số Lượng)"].sum():,.0f}')
 
         result = result.merge(inv_agg, on='SKU', how='left')
-        result['Tồn Kho Hiện Tại'] = result['Tồn Kho Hiện Tại'].fillna(0)
+        for col in ['Tồn Kho (Số Lượng)', 'Tồn Bảo Lưu', 'Tồn Khả Dụng']:
+            if col in result.columns:
+                result[col] = result[col].fillna(0)
 
-        # 7. Gợi ý đặt hàng
+        # 7. Gợi ý đặt hàng — dựa trên Tồn Khả Dụng
         needed = (result['TB Tháng (6T GN)'] * months).round(0)
         scol   = f'Gợi Ý Đặt Hàng ({months} Tháng)'
-        result[scol] = (needed - result['Tồn Kho Hiện Tại']).clip(lower=0).round(0)
+        result[scol] = (needed - result['Tồn Khả Dụng']).clip(lower=0).round(0)
 
         result = result.fillna(0)
         self.log(f'✅  {len(result):,} SKU')
@@ -590,12 +607,14 @@ class App:
                 'calc': ('7C3AED','FFFFFF'), 'inv':  ('D97706','FFFFFF'), 'suggest':('059669','FFFFFF')}
         FILL = {'month':'EFF6FF', 'calc':'F5F3FF', 'inv':'FFFBEB', 'suggest':'ECFDF5'}
 
+        inv_cols = ['Tồn Kho (Số Lượng)', 'Tồn Bảo Lưu', 'Tồn Khả Dụng']
+
         def grp(c):
-            if c in fixed:           return 'fixed'
-            if c in month_cols:      return 'month'
-            if c in calc_cols:       return 'calc'
-            if c == 'Tồn Kho Hiện Tại': return 'inv'
-            if c == scol:            return 'suggest'
+            if c in fixed:      return 'fixed'
+            if c in month_cols: return 'month'
+            if c in calc_cols:  return 'calc'
+            if c in inv_cols:   return 'inv'
+            if c == scol:       return 'suggest'
             return 'fixed'
 
         thin = Border(*(Side(style='thin', color='CBD5E0'),)*4)
@@ -642,7 +661,9 @@ class App:
 
         W = {'SKU':18,'Tên Sản Phẩm':40,'Brand':16,'Category':20,
              'Tổng Năm':13,'TB Quý':11,'TB Tháng (Năm)':15,
-             'Tổng 6T Gần Nhất':17,'TB Tháng (6T GN)':17,'Tồn Kho Hiện Tại':17,scol:24}
+             'Tổng 6T Gần Nhất':17,'TB Tháng (6T GN)':17,
+             'Tồn Kho (Số Lượng)':18,'Tồn Bảo Lưu':14,'Tồn Khả Dụng':15,
+             scol:24}
         for ci, col in enumerate(cols, 1):
             ws.column_dimensions[get_column_letter(ci)].width = W.get(col, 11 if col in month_cols else 14)
 
