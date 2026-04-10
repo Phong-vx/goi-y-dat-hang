@@ -586,8 +586,8 @@ class App:
         month_cols = [c for c in cols if re.match(r'^Th\.\d{1,2}/\d{4}$', c)]
         calc_cols  = ['Tổng Năm', 'TB Quý', 'TB Tháng (Năm)', 'Tổng 6T Gần Nhất', 'TB Tháng (6T GN)']
 
-        HDR  = {'fixed':('1A56DB','FFF'), 'month':('2563EB','FFF'),
-                'calc': ('7C3AED','FFF'), 'inv':  ('D97706','FFF'), 'suggest':('059669','FFF')}
+        HDR  = {'fixed':('1A56DB','FFFFFF'), 'month':('2563EB','FFFFFF'),
+                'calc': ('7C3AED','FFFFFF'), 'inv':  ('D97706','FFFFFF'), 'suggest':('059669','FFFFFF')}
         FILL = {'month':'EFF6FF', 'calc':'F5F3FF', 'inv':'FFFBEB', 'suggest':'ECFDF5'}
 
         def grp(c):
