@@ -32,7 +32,7 @@ echo  Tim thay Python: %PYTHON%
 echo.
 
 echo  [1/3] Cai dat thu vien can thiet...
-%PYTHON% -m pip install pandas openpyxl pyinstaller --quiet
+%PYTHON% -m pip install pandas openpyxl Pillow pyinstaller --quiet
 if %errorlevel% neq 0 (
     echo  LOI: Khong cai duoc thu vien. Kiem tra ket noi mang.
     pause & exit /b
