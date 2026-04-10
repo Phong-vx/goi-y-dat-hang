@@ -47,6 +47,7 @@ SALES = {
     'date':      'Date',
     'qty':       'Quantity',
     'sale_team': 'Sale Team',
+    'revenue':   'Revenue',
 }
 INV = {
     'sku':          'Sản phẩm/Mã nội bộ',
@@ -595,6 +596,18 @@ class App:
         result['Tổng 6T Gần Nhất'] = result[last6].sum(axis=1)
         result['TB Tháng (6T GN)'] = (result['Tổng 6T Gần Nhất'] / len(last6)).round(0)
 
+        # Doanh thu tổng
+        if SALES['revenue'] in sales.columns:
+            sales[SALES['revenue']] = pd.to_numeric(sales[SALES['revenue']], errors='coerce').fillna(0)
+            rev_agg = sales.groupby(SALES['sku'])[SALES['revenue']].sum().reset_index()
+            rev_agg.columns = ['SKU', 'Doanh Thu Tổng']
+            rev_agg['SKU'] = rev_agg['SKU'].astype(str).str.strip()
+            result = result.merge(rev_agg, on='SKU', how='left')
+            result['Doanh Thu Tổng'] = result['Doanh Thu Tổng'].fillna(0)
+            has_revenue = True
+        else:
+            has_revenue = False
+
         # Tổng bán theo Sale Team
         team_labels = []
         if SALES['sale_team'] in sales.columns:
@@ -620,6 +633,7 @@ class App:
 
         result.attrs['year_stat_cols'] = year_stat_cols
         result.attrs['team_labels']    = team_labels
+        result.attrs['has_revenue']    = has_revenue
 
         # 6. Tồn kho
         self.log('📦  Đọc file tồn kho…')
@@ -665,10 +679,12 @@ class App:
 
         # Sắp xếp lại thứ tự cột
         inv_out = [c for c in ['Tồn Kho (Số Lượng)', 'Tồn Bảo Lưu', 'Tồn Khả Dụng'] if c in result.columns]
+        rev_out = ['Doanh Thu Tổng'] if has_revenue else []
         ordered = (['SKU', 'Tên Sản Phẩm', 'Brand', 'Category']
                    + mlabels
                    + year_stat_cols
                    + ['Tổng Toàn TG']
+                   + rev_out
                    + team_labels
                    + ['Tổng 6T Gần Nhất', 'TB Tháng (6T GN)']
                    + inv_out
@@ -724,6 +740,7 @@ class App:
             'yr_total': ('6D28D9', 'FFFFFF', 'F5F3FF',  'EDE9FE'),
             'yr_avg':   ('7C3AED', 'FFFFFF', 'FAF5FF',  'F3E8FF'),
             'grand':    ('4C1D95', 'FFFFFF', 'EDE9FE',  'DDD6FE'),
+            'revenue':  ('B45309', 'FFFFFF', 'FFFBEB',  'FDE68A'),
             'team':     ('0F766E', 'FFFFFF', 'F0FDFA',  'CCFBF1'),
             'stat6':    ('0369A1', 'FFFFFF', 'E0F2FE',  'BAE6FD'),
             'inv':      ('B45309', 'FFFFFF', 'FFFBEB',  'FEF3C7'),
@@ -736,6 +753,7 @@ class App:
             if c in year_total_cols:return 'yr_total'
             if c in year_avg_cols:  return 'yr_avg'
             if c == grand_col:      return 'grand'
+            if c == 'Doanh Thu Tổng': return 'revenue'
             if c in team_cols:      return 'team'
             if c in stat6_cols:     return 'stat6'
             if c in inv_cols:       return 'inv'
@@ -786,6 +804,10 @@ class App:
                 elif g in ('yr_total', 'grand', 'team'):
                     cell.font      = Font(name='Calibri', bold=True, size=10)
                     cell.alignment = rgt
+                elif g == 'revenue':
+                    cell.font         = Font(name='Calibri', bold=True, size=10)
+                    cell.alignment    = rgt
+                    cell.number_format = '#,##0'
                 elif g == 'yr_avg':
                     cell.font      = Font(name='Calibri', size=10, italic=True)
                     cell.alignment = rgt
@@ -811,6 +833,7 @@ class App:
             W[c] = 13
         for c in team_cols:
             W[c] = 16
+        W['Doanh Thu Tổng'] = 18
 
         for ci, col in enumerate(cols, 1):
             ws.column_dimensions[get_column_letter(ci)].width = W.get(
