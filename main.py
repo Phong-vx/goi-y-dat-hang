@@ -421,67 +421,47 @@ class App:
 
     def _build_ui(self):
         # ── Header ───────────────────────────────────────────────────────────
-        hdr = tk.Frame(self.root, bg=C['hdr_top'])
+        HDR_BG = '#FFFFFF'
+        hdr = tk.Frame(self.root, bg=HDR_BG)
         hdr.pack(fill=tk.X)
 
-        hdr_inner = tk.Frame(hdr, bg=C['hdr_top'], padx=32, pady=22)
+        hdr_inner = tk.Frame(hdr, bg=HDR_BG, padx=32, pady=18)
         hdr_inner.pack(fill=tk.X)
 
-        # Logo bên phải
+        # Logo + tiêu đề cùng hàng ngang
+        title_row = tk.Frame(hdr_inner, bg=HDR_BG)
+        title_row.pack(anchor='w')
+
+        # Logo bên trái tiêu đề
         try:
             pil_img = Image.open(LOGO_PATH).convert('RGBA')
-            logo_h  = 52
+            logo_h  = 48
             logo_w  = int(pil_img.width * logo_h / pil_img.height)
             pil_img = pil_img.resize((logo_w, logo_h), Image.LANCZOS)
-            bg_img  = Image.new('RGBA', (logo_w, logo_h), C['hdr_top'])
+            bg_img  = Image.new('RGBA', (logo_w, logo_h), (255, 255, 255, 255))
             bg_img.paste(pil_img, mask=pil_img.split()[3])
             self._logo_img = ImageTk.PhotoImage(bg_img.convert('RGB'))
-            tk.Label(hdr_inner, image=self._logo_img,
-                     bg=C['hdr_top']).pack(side=tk.RIGHT, anchor='center')
+            tk.Label(title_row, image=self._logo_img,
+                     bg=HDR_BG).pack(side=tk.LEFT, anchor='center', padx=(0, 14))
         except Exception:
             pass
 
-        title_row = tk.Frame(hdr_inner, bg=C['hdr_top'])
-        title_row.pack(anchor='w')
         tk.Label(title_row, text='Gợi Ý Đặt Hàng',
                  font=(SANS, 24, 'bold'),
-                 bg=C['hdr_top'], fg='white').pack(side=tk.LEFT)
+                 bg=HDR_BG, fg=C['primary']).pack(side=tk.LEFT, anchor='center')
+
         tk.Label(hdr_inner,
                  text='Phân tích dữ liệu bán hàng & tồn kho  ·  Xuất file Excel gợi ý đặt hàng',
-                 font=(SANS, 12), bg=C['hdr_top'], fg='#98989F').pack(anchor='w', pady=(4, 0))
+                 font=(SANS, 12), bg=HDR_BG, fg='#98989F').pack(anchor='w', pady=(6, 0))
 
-        # ── Scrollable body ───────────────────────────────────────────────────
-        outer = tk.Frame(self.root, bg=C['bg'])
-        outer.pack(fill=tk.BOTH, expand=True)
+        # Đường kẻ phân cách dưới header
+        tk.Frame(self.root, bg='#E5E5EA', height=1).pack(fill=tk.X)
 
-        canvas = tk.Canvas(outer, bg=C['bg'], highlightthickness=0)
-        self._body_canvas = canvas
-        vsb = tk.Scrollbar(outer, orient='vertical', command=canvas.yview)
-        canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        self.body = tk.Frame(canvas, bg=C['bg'])
-        win = canvas.create_window((0, 0), window=self.body, anchor='nw')
-
-        self.body.bind('<Configure>', lambda e: canvas.configure(
-            scrollregion=canvas.bbox('all')))
-        canvas.bind('<Configure>', lambda e: canvas.itemconfig(win, width=e.width))
-        canvas.bind('<MouseWheel>', self._scroll_main)
-        self.body.bind('<MouseWheel>', self._scroll_main)
-        canvas.bind('<Button-4>', self._scroll_main)
-        canvas.bind('<Button-5>', self._scroll_main)
+        # ── Body (fixed layout, no outer scroll) ─────────────────────────────
+        self.body = tk.Frame(self.root, bg=C['bg'])
+        self.body.pack(fill=tk.BOTH, expand=True)
 
         self._build_body()
-
-    def _scroll_main(self, event):
-        if event.delta:
-            units = int(-1 * (event.delta / 120)) or (-1 if event.delta > 0 else 1)
-        elif event.num == 4:
-            units = -1
-        else:
-            units = 1
-        self._body_canvas.yview_scroll(units, 'units')
 
     def _build_body(self):
         b = self.body
@@ -492,13 +472,19 @@ class App:
         # ── Cột trái: controls ────────────────────────────────────────────────
         left = tk.Frame(b, bg=C['bg'])
         left.grid(row=0, column=0, sticky='nsew', padx=(22, 8), pady=18)
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(2, weight=1)   # filter row mở rộng khi cửa sổ cao hơn
 
         # ── Cột phải: log ─────────────────────────────────────────────────────
         right = tk.Frame(b, bg=C['bg'])
         right.grid(row=0, column=1, sticky='nsew', padx=(8, 22), pady=18)
+        right.columnconfigure(0, weight=1)
         right.rowconfigure(0, weight=1)
 
-        # ── 1. Import Files (compact) ─────────────────────────────────────────
+        # left dùng grid: row 0 = import, row 1 = filters (expand), row 2 = settings, row 3 = CTA
+        left.rowconfigure(1, weight=1)
+
+        # ── 1. Import Files ───────────────────────────────────────────────────
         card, body = make_card(left, '① Import Files')
         self._file_row(body, 'File Bán Hàng', self.v_sales)
         tk.Frame(body, bg=C['sep'], height=1).pack(fill=tk.X, pady=6)
@@ -508,13 +494,14 @@ class App:
         self.btn_read = make_btn(btn_row, '  Đọc Files & Tải Bộ Lọc  →',
                                   self._read_files, style='green')
         self.btn_read.pack(side=tk.RIGHT)
-        card.pack(fill=tk.X, pady=(0, 12))
+        card.grid(row=0, column=0, sticky='ew', pady=(0, 10))
 
-        # ── 2. Bộ lọc Brand + Category (2 cột) ───────────────────────────────
+        # ── 2. Bộ lọc Brand + Category (2 cột, expand theo chiều cao) ─────────
         filter_row = tk.Frame(left, bg=C['bg'])
-        filter_row.pack(fill=tk.X, pady=(0, 12))
+        filter_row.grid(row=1, column=0, sticky='nsew', pady=(0, 10))
         filter_row.columnconfigure(0, weight=1)
         filter_row.columnconfigure(1, weight=1)
+        filter_row.rowconfigure(0, weight=1)
 
         bc, bbody = make_card(filter_row, '② Thương Hiệu', '(tuỳ chọn · trống = tất cả)')
         self.brand_panel = FilterPanel(bbody)
@@ -528,11 +515,10 @@ class App:
 
         # ── 3. Tồn kho tối thiểu + Leadtime (2 cột) ──────────────────────────
         settings_row = tk.Frame(left, bg=C['bg'])
-        settings_row.pack(fill=tk.X, pady=(0, 12))
+        settings_row.grid(row=2, column=0, sticky='ew', pady=(0, 10))
         settings_row.columnconfigure(0, weight=1)
         settings_row.columnconfigure(1, weight=1)
 
-        # Tồn kho tối thiểu
         mc, mbody = make_card(settings_row, '④ Tồn Kho Tối Thiểu')
         mrow = tk.Frame(mbody, bg=C['card'])
         mrow.pack(fill=tk.X)
@@ -545,7 +531,6 @@ class App:
                    buttonbackground=C['sep']).pack(side=tk.LEFT, padx=(10, 0), ipady=4)
         mc.grid(row=0, column=0, sticky='nsew', padx=(0, 6))
 
-        # Leadtime về hàng
         lc2, lbody2 = make_card(settings_row, '⑤ Leadtime Về Hàng')
         lrow = tk.Frame(lbody2, bg=C['card'])
         lrow.pack(fill=tk.X)
@@ -562,19 +547,17 @@ class App:
         self.btn_run = make_btn(left, '  🚀   Tạo Gợi Ý Đặt Hàng  ',
                                  self.run, style='primary')
         self.btn_run.config(font=(SANS, 15, 'bold'), pady=15)
-        self.btn_run.pack(fill=tk.X)
+        self.btn_run.grid(row=3, column=0, sticky='ew')
 
         # ── Log (cột phải, fill full height) ─────────────────────────────────
         lc, lbody = make_card(right, 'Nhật Ký')
         lbody.config(padx=0, pady=0)
-        self.log_box = tk.Text(lbody, height=28, font=(MONO, 10),
+        self.log_box = tk.Text(lbody, font=(MONO, 10),
                                 bg=C['console_bg'], fg=C['console_fg'],
                                 padx=16, pady=10, wrap=tk.WORD, bd=0,
                                 insertbackground=C['console_fg'])
         self.log_box.pack(fill=tk.BOTH, expand=True)
-        self.log_box.bind('<MouseWheel>', lambda e: 'break')
         lc.grid(row=0, column=0, sticky='nsew')
-        right.columnconfigure(0, weight=1)
 
     # ── Widgets helpers ───────────────────────────────────────────────────────
 
@@ -1103,7 +1086,7 @@ class App:
                 if col == f'Tổng {yr}':
                     return f'=SUM({cl(ycols[0])}{ri}:{cl(ycols[-1])}{ri})'
                 if col == f'TB {yr}':
-                    return f'={cl(f"Tổng {yr}")}{ri}/{len(ycols)}'
+                    return f'=ROUND({cl(f"Tổng {yr}")}{ri}/{len(ycols)},0)'
             # Tổng Toàn TG = SUM tất cả tháng
             if col == 'Tổng Toàn TG' and month_cols:
                 return f'=SUM({cl(month_cols[0])}{ri}:{cl(month_cols[-1])}{ri})'
@@ -1112,7 +1095,7 @@ class App:
                 return f'=SUM({cl(last6_cols[0])}{ri}:{cl(last6_cols[-1])}{ri})'
             # TB Tháng (6T GN) = Tổng 6T / n
             if col == 'TB Tháng (6T GN)' and 'Tổng 6T Gần Nhất' in col_letter:
-                return f'={cl("Tổng 6T Gần Nhất")}{ri}/{last6_n}'
+                return f'=ROUND({cl("Tổng 6T Gần Nhất")}{ri}/{last6_n},0)'
             # Gợi Ý Đặt Hàng = MAX(0, TB × total_months − Tồn Khả Dụng)
             if col == scol:
                 tb = cl('TB Tháng (6T GN)'); tkd = cl('Tồn Khả Dụng')
@@ -1161,11 +1144,14 @@ class App:
                     cell.alignment    = rgt
                     cell.number_format = '#,##0'
                 elif g == 'yr_avg':
-                    cell.font      = Font(name='Calibri', size=10, italic=True)
-                    cell.alignment = rgt
+                    cell.font          = Font(name='Calibri', size=10, italic=True)
+                    cell.alignment     = rgt
+                    cell.number_format = '0'
                 elif g == 'stat6':
-                    cell.font      = Font(name='Calibri', bold=True, size=10)
-                    cell.alignment = rgt
+                    cell.font          = Font(name='Calibri', bold=True, size=10)
+                    cell.alignment     = rgt
+                    if col == 'TB Tháng (6T GN)':
+                        cell.number_format = '0'
                 elif g == 'inv':
                     cell.font      = Font(name='Calibri', bold=True, size=10)
                     cell.alignment = ctr
