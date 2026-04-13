@@ -467,8 +467,8 @@ class App:
 
     def _build_body(self):
         b = self.body
-        b.columnconfigure(0, weight=3)
-        b.columnconfigure(1, weight=2)
+        b.columnconfigure(0, weight=2)
+        b.columnconfigure(1, weight=1)
         b.rowconfigure(0, weight=1)
 
         # ── Cột trái: scrollable (fix màn hình nhỏ Windows) ──────────────────
