@@ -412,6 +412,7 @@ class App:
         self.v_inv      = tk.StringVar()
         self.v_months   = tk.StringVar(value='')   # bắt buộc người dùng nhập
         self.v_leadtime = tk.StringVar(value='')   # bắt buộc người dùng nhập
+        # không cần chọn kênh — luôn tính cả BL lẫn BS
 
         self._build_ui()
         self.log('✅ Ứng dụng khởi động thành công.')
@@ -540,13 +541,47 @@ class App:
         filter_row.bind('<Button-4>',   _left_scroll)
         filter_row.bind('<Button-5>',   _left_scroll)
 
-        # ── 3. Tồn kho tối thiểu + Leadtime (bắt buộc nhập, không có mặc định)
+        # ── 3. Phân kênh Sale Team (BL / BS) ─────────────────────────────────
+        chan_card, chan_body = make_card(left, '④ Phân Kênh Sale Team',
+                                         '(tuỳ chọn · trống = dùng tất cả team)')
+        chan_body.config(pady=10)
+        chan_card.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Label(chan_body,
+                 text='Sau khi Đọc Files, chọn Sale Team thuộc từng kênh. Trống = dùng tất cả team cho kênh đó.',
+                 font=(SANS, 10), bg=C['card'], fg=C['text2'],
+                 anchor='w', wraplength=460, justify='left').pack(fill=tk.X, pady=(0, 10))
+
+        chan_cols_frame = tk.Frame(chan_body, bg=C['card'])
+        chan_cols_frame.pack(fill=tk.X)
+        chan_cols_frame.columnconfigure(0, weight=1)
+        chan_cols_frame.columnconfigure(1, weight=1)
+
+        # ─ BL ────────────────────────────────────────────────────────────────
+        bl_col = tk.Frame(chan_cols_frame, bg=C['card'])
+        bl_col.grid(row=0, column=0, sticky='nsew', padx=(0, 6))
+        tk.Label(bl_col, text='Bán Lẻ (Retail)',
+                 font=(SANS, 12, 'bold'), bg=C['card'], fg=C['primary'],
+                 anchor='w').pack(fill=tk.X, pady=(0, 4))
+        self.bl_team_panel = FilterPanel(bl_col)
+        self.bl_team_panel.pack(fill=tk.BOTH, expand=True)
+
+        # ─ BS ────────────────────────────────────────────────────────────────
+        bs_col = tk.Frame(chan_cols_frame, bg=C['card'])
+        bs_col.grid(row=0, column=1, sticky='nsew', padx=(6, 0))
+        tk.Label(bs_col, text='Bán Sỉ (Wholesale)',
+                 font=(SANS, 12, 'bold'), bg=C['card'], fg='#6D28D9',
+                 anchor='w').pack(fill=tk.X, pady=(0, 4))
+        self.bs_team_panel = FilterPanel(bs_col)
+        self.bs_team_panel.pack(fill=tk.BOTH, expand=True)
+
+        # ── 4. Tồn kho tối thiểu + Leadtime (bắt buộc nhập, không có mặc định)
         settings_row = tk.Frame(left, bg=C['bg'])
         settings_row.pack(fill=tk.X, pady=(0, 10))
         settings_row.columnconfigure(0, weight=1)
         settings_row.columnconfigure(1, weight=1)
 
-        mc, mbody = make_card(settings_row, '④ Tồn Kho Tối Thiểu', '(bắt buộc nhập)')
+        mc, mbody = make_card(settings_row, '⑤ Tồn Kho Tối Thiểu', '(bắt buộc nhập)')
         mrow = tk.Frame(mbody, bg=C['card'])
         mrow.pack(fill=tk.X)
         tk.Label(mrow, text='Số tháng :', font=(SANS, 13),
@@ -559,7 +594,7 @@ class App:
                  bg=C['card'], fg=C['text2']).pack(side=tk.LEFT, padx=(6, 0))
         mc.grid(row=0, column=0, sticky='nsew', padx=(0, 6))
 
-        lc2, lbody2 = make_card(settings_row, '⑤ Leadtime Về Hàng', '(bắt buộc nhập)')
+        lc2, lbody2 = make_card(settings_row, '⑥ Leadtime Về Hàng', '(bắt buộc nhập)')
         lrow = tk.Frame(lbody2, bg=C['card'])
         lrow.pack(fill=tk.X)
         tk.Label(lrow, text='Số tháng :', font=(SANS, 13),
@@ -676,7 +711,14 @@ class App:
             self.brand_panel.populate(brands)
             self.cat_panel.populate(cats)
 
-            self.log(f'✅  {len(brands)} thương hiệu  ·  {len(cats)} danh mục  →  sẵn sàng lọc')
+            # Sale Teams cho phân kênh BL / BS
+            teams: list = []
+            if SALES['sale_team'] in sales.columns:
+                teams = sorted(clean(sales[SALES['sale_team']]), key=str.upper)
+            self.bl_team_panel.populate(teams)
+            self.bs_team_panel.populate(teams)
+
+            self.log(f'✅  {len(brands)} thương hiệu  ·  {len(cats)} danh mục  ·  {len(teams)} sale team  →  sẵn sàng lọc')
 
         except Exception as e:
             self.log(f'❌  {e}')
@@ -713,6 +755,8 @@ class App:
 
         sel_brands = self.brand_panel.selected()
         sel_cats   = self.cat_panel.selected()
+        bl_teams   = self.bl_team_panel.selected()
+        bs_teams   = self.bs_team_panel.selected()
 
         brand_desc = ', '.join(sel_brands) if sel_brands else 'Tất cả'
         cat_desc   = ', '.join(sel_cats)   if sel_cats   else 'Tất cả'
@@ -724,7 +768,8 @@ class App:
         try:
             self.btn_run.config(state='disabled', text='⏳   Đang xử lý…')
             self.log(f'─── Tồn min: {m}T · Leadtime: {lt}T · Brand: {brand_desc} · Danh mục: {cat_desc} ───')
-            df  = self._process(s, i, m, lt, sel_brands, sel_cats)
+            df  = self._process(s, i, m, lt, sel_brands, sel_cats,
+                                bl_teams=bl_teams, bs_teams=bs_teams)
             out = self._export(df, m, lt, sel_brands, sel_cats)
             self.log(f'✅  Hoàn thành → {out}')
             messagebox.showinfo('Thành công', f'Đã tạo file gợi ý đặt hàng!\n\n📄 {out}')
@@ -739,7 +784,8 @@ class App:
 
     # ── Core logic ────────────────────────────────────────────────────────────
 
-    def _process(self, sales_path, inv_path, months, leadtime, sel_brands, sel_cats) -> pd.DataFrame:
+    def _process(self, sales_path, inv_path, months, leadtime, sel_brands, sel_cats,
+                 bl_teams=None, bs_teams=None) -> pd.DataFrame:
 
         # 1. Đọc & làm sạch bán hàng
         self.log('📊  Đọc file bán hàng…')
@@ -947,14 +993,55 @@ class App:
             if col in result.columns:
                 result[col] = result[col].fillna(0)
 
-        # 7. Gợi ý đặt hàng
-        # Công thức: TB_tháng × (tồn_tối_thiểu + leadtime) - Tồn_Khả_Dụng
-        total_months = months + leadtime
-        needed = (result['TB Tháng (6T GN)'] * total_months).round(0)
-        scol   = f'Gợi Ý Đặt Hàng (Tồn {months}T + LT {leadtime}T)'
-        result[scol] = (needed - result['Tồn Khả Dụng']).clip(lower=0).round(0)
+        # 7. Gợi ý đặt hàng — luôn tính Tổng + BL + BS
+        total_months_val = months + leadtime
+        scol = f'Gợi Ý Đặt Hàng (Tồn {months}T + LT {leadtime}T)'
+        result[scol] = (
+            (result['TB Tháng (6T GN)'] * total_months_val) - result['Tồn Khả Dụng']
+        ).clip(lower=0).round(0)
 
-        # 8. Nhận Xét
+        # 7b. Tính TB & Gợi Ý theo kênh BL / BS
+        tb_bl_col = gy_bl_col = tb_bs_col = gy_bs_col = None
+
+        def _channel_suggest(sales_df, team_filter, chan_name):
+            if SALES['sale_team'] not in sales_df.columns:
+                return None, None, None
+            ch = (sales_df[sales_df[SALES['sale_team']].astype(str).isin(team_filter)]
+                  if team_filter else sales_df)
+            if ch.empty:
+                return None, None, None
+            ch_mo = (ch.groupby([SALES['sku'], '_month'])[SALES['qty']]
+                     .sum().reset_index())
+            ch_mo.columns = ['SKU', 'Month', 'Qty']
+            ch_mo['SKU'] = ch_mo['SKU'].astype(str).str.strip()
+            ch_piv = ch_mo.pivot_table(index='SKU', columns='Month',
+                                       values='Qty', fill_value=0).reset_index()
+            ch_piv.rename(columns=mcmap, inplace=True)
+            last6_ch = [c for c in last6 if c in ch_piv.columns]
+            n6 = len(last6_ch) if last6_ch else max(len(last6), 1)
+            ch_piv['_tb'] = (
+                ch_piv[last6_ch].sum(axis=1) / n6 if last6_ch else 0
+            ).round(0)
+            tb_col = f'TB {chan_name} (6T GN)'
+            gy_col = f'Gợi Ý {chan_name} (Tồn {months}T + LT {leadtime}T)'
+            tb_map = ch_piv.set_index('SKU')['_tb'].to_dict()
+            return tb_col, gy_col, tb_map
+
+        tb_bl_col, gy_bl_col, tb_bl_map = _channel_suggest(sales, bl_teams, 'BL')
+        if tb_bl_col:
+            result[tb_bl_col] = result['SKU'].map(tb_bl_map).fillna(0).round(0)
+            result[gy_bl_col] = (
+                result[tb_bl_col] * total_months_val - result['Tồn Khả Dụng']
+            ).clip(lower=0).round(0)
+
+        tb_bs_col, gy_bs_col, tb_bs_map = _channel_suggest(sales, bs_teams, 'BS')
+        if tb_bs_col:
+            result[tb_bs_col] = result['SKU'].map(tb_bs_map).fillna(0).round(0)
+            result[gy_bs_col] = (
+                result[tb_bs_col] * total_months_val - result['Tồn Khả Dụng']
+            ).clip(lower=0).round(0)
+
+        # 8. Nhận Xét (dựa trên Gợi Ý Tổng)
         nxcol = 'Nhận Xét'
         result[nxcol] = 'Đủ Hàng'
         result.loc[result['SKU'].isin(had_sales_skus) & (result[scol] >= 1), nxcol] = 'Cần Đặt'
@@ -968,12 +1055,21 @@ class App:
         inv_out        = [c for c in ['Tồn Kho (Số Lượng)', 'Tồn Bảo Lưu', 'Tồn Khả Dụng'] if c in result.columns]
         rev_out        = ['Doanh Thu Tổng'] if has_revenue else []
         extra_info_out = [c for c in extra_names if c in result.columns]
+        tb_chan_out    = [c for c in [tb_bl_col, tb_bs_col] if c]
+        gy_chan_out    = [c for c in [gy_bl_col, gy_bs_col] if c]
         ordered = (['SKU', 'Tên Sản Phẩm', 'Brand', 'Category'] + extra_info_out
                    + mlabels + year_stat_cols + ['Tổng Toàn TG']
                    + rev_out + team_labels
-                   + ['Tổng 6T Gần Nhất', 'TB Tháng (6T GN)']
-                   + inv_out + [scol, dtcol, nxcol])
+                   + ['Tổng 6T Gần Nhất', 'TB Tháng (6T GN)'] + tb_chan_out
+                   + inv_out + [scol] + gy_chan_out + [dtcol, nxcol])
         result = result[[c for c in ordered if c in result.columns]]
+
+        # Metadata cho _export
+        result.attrs['scol']      = scol
+        result.attrs['gy_bl_col'] = gy_bl_col
+        result.attrs['gy_bs_col'] = gy_bs_col
+        result.attrs['tb_bl_col'] = tb_bl_col
+        result.attrs['tb_bs_col'] = tb_bs_col
         _text_fixed = ['Tên Sản Phẩm', 'Brand', 'Category', 'Model', 'Color', 'Frame Size', 'Sub Category']
         text_cols = [c for c in result.columns if c in _text_fixed]
         num_cols  = [c for c in result.columns if c not in text_cols + ['SKU', nxcol, dtcol]]
@@ -1014,7 +1110,12 @@ class App:
         ws.title = f'Gợi Ý {months}T'
 
         cols       = list(df.columns)
-        scol       = f'Gợi Ý Đặt Hàng (Tồn {months}T + LT {leadtime}T)'
+        scol       = df.attrs.get('scol', f'Gợi Ý Đặt Hàng (Tồn {months}T + LT {leadtime}T)')
+        gy_bl_col  = df.attrs.get('gy_bl_col')
+        gy_bs_col  = df.attrs.get('gy_bs_col')
+        tb_bl_col  = df.attrs.get('tb_bl_col')
+        tb_bs_col  = df.attrs.get('tb_bs_col')
+        tb_chan_cols = [c for c in [tb_bl_col, tb_bs_col] if c and c in cols]
         dtcol      = 'Đặt Thực'
         fixed      = ['SKU', 'Tên Sản Phẩm', 'Brand', 'Category', 'Model',
                       'Color', 'Frame Size', 'Sub Category']
@@ -1034,33 +1135,39 @@ class App:
         # ── Màu header theo nhóm ──────────────────────────────────────────────
         # (bg_header, fg_header, fill_odd, fill_even)
         GRP_STYLE = {
-            'fixed':    ('1A56DB', 'FFFFFF', 'FFFFFF',  'F0F4FF'),
-            'month':    ('2563EB', 'FFFFFF', 'EFF6FF',  'DBEAFE'),
-            'yr_total': ('6D28D9', 'FFFFFF', 'F5F3FF',  'EDE9FE'),
-            'yr_avg':   ('7C3AED', 'FFFFFF', 'FAF5FF',  'F3E8FF'),
-            'grand':    ('4C1D95', 'FFFFFF', 'EDE9FE',  'DDD6FE'),
-            'revenue':  ('B45309', 'FFFFFF', 'FFFBEB',  'FDE68A'),
-            'team':     ('0F766E', 'FFFFFF', 'F0FDFA',  'CCFBF1'),
-            'stat6':    ('0369A1', 'FFFFFF', 'E0F2FE',  'BAE6FD'),
-            'inv':      ('B45309', 'FFFFFF', 'FFFBEB',  'FEF3C7'),
-            'suggest':  ('065F46', 'FFFFFF', 'ECFDF5',  'D1FAE5'),
-            'dat_thuc': ('B45309', 'FFFFFF', 'FFFBEB',  'FEF9C3'),
-            'nhan_xet': ('374151', 'FFFFFF', 'F9FAFB',  'F3F4F6'),
+            'fixed':      ('1A56DB', 'FFFFFF', 'FFFFFF',  'F0F4FF'),
+            'month':      ('2563EB', 'FFFFFF', 'EFF6FF',  'DBEAFE'),
+            'yr_total':   ('6D28D9', 'FFFFFF', 'F5F3FF',  'EDE9FE'),
+            'yr_avg':     ('7C3AED', 'FFFFFF', 'FAF5FF',  'F3E8FF'),
+            'grand':      ('4C1D95', 'FFFFFF', 'EDE9FE',  'DDD6FE'),
+            'revenue':    ('B45309', 'FFFFFF', 'FFFBEB',  'FDE68A'),
+            'team':       ('0F766E', 'FFFFFF', 'F0FDFA',  'CCFBF1'),
+            'stat6':      ('0369A1', 'FFFFFF', 'E0F2FE',  'BAE6FD'),
+            'tb_chan':    ('0369A1', 'FFFFFF', 'E0F2FE',  'BAE6FD'),
+            'inv':        ('B45309', 'FFFFFF', 'FFFBEB',  'FEF3C7'),
+            'suggest':    ('065F46', 'FFFFFF', 'ECFDF5',  'D1FAE5'),
+            'suggest_bl': ('1D4ED8', 'FFFFFF', 'EFF6FF',  'BFDBFE'),
+            'suggest_bs': ('6D28D9', 'FFFFFF', 'F5F3FF',  'DDD6FE'),
+            'dat_thuc':   ('B45309', 'FFFFFF', 'FFFBEB',  'FEF9C3'),
+            'nhan_xet':   ('374151', 'FFFFFF', 'F9FAFB',  'F3F4F6'),
         }
 
         def grp(c):
-            if c in fixed:          return 'fixed'
-            if c in month_cols:     return 'month'
-            if c in year_total_cols:return 'yr_total'
-            if c in year_avg_cols:  return 'yr_avg'
-            if c == grand_col:      return 'grand'
-            if c == 'Doanh Thu Tổng': return 'revenue'
-            if c in team_cols:      return 'team'
-            if c in stat6_cols:     return 'stat6'
-            if c in inv_cols:       return 'inv'
-            if c == scol:           return 'suggest'
-            if c == dtcol:          return 'dat_thuc'
-            if c == nxcol:          return 'nhan_xet'
+            if c in fixed:                       return 'fixed'
+            if c in month_cols:                  return 'month'
+            if c in year_total_cols:             return 'yr_total'
+            if c in year_avg_cols:               return 'yr_avg'
+            if c == grand_col:                   return 'grand'
+            if c == 'Doanh Thu Tổng':            return 'revenue'
+            if c in team_cols:                   return 'team'
+            if c in stat6_cols:                  return 'stat6'
+            if c in tb_chan_cols:                return 'tb_chan'
+            if c in inv_cols:                    return 'inv'
+            if c == scol:                        return 'suggest'
+            if gy_bl_col and c == gy_bl_col:     return 'suggest_bl'
+            if gy_bs_col and c == gy_bs_col:     return 'suggest_bs'
+            if c == dtcol:                       return 'dat_thuc'
+            if c == nxcol:                       return 'nhan_xet'
             return 'fixed'
 
         thin = Border(
@@ -1138,9 +1245,19 @@ class App:
             # TB Tháng (6T GN) = Tổng 6T / n
             if col == 'TB Tháng (6T GN)' and 'Tổng 6T Gần Nhất' in col_letter:
                 return f'=ROUND({cl("Tổng 6T Gần Nhất")}{ri}/{last6_n},0)'
-            # Gợi Ý Đặt Hàng = MAX(0, TB × total_months − Tồn Khả Dụng)
+            # Gợi Ý Tổng
             if col == scol:
                 tb = cl('TB Tháng (6T GN)'); tkd = cl('Tồn Khả Dụng')
+                if tb and tkd:
+                    return f'=MAX(0,{tb}{ri}*{total_months}-{tkd}{ri})'
+            # Gợi Ý BL
+            if gy_bl_col and col == gy_bl_col and tb_bl_col:
+                tb = cl(tb_bl_col); tkd = cl('Tồn Khả Dụng')
+                if tb and tkd:
+                    return f'=MAX(0,{tb}{ri}*{total_months}-{tkd}{ri})'
+            # Gợi Ý BS
+            if gy_bs_col and col == gy_bs_col and tb_bs_col:
+                tb = cl(tb_bs_col); tkd = cl('Tồn Khả Dụng')
                 if tb and tkd:
                     return f'=MAX(0,{tb}{ri}*{total_months}-{tkd}{ri})'
             # Nhận Xét (công thức IF lồng nhau)
@@ -1166,7 +1283,7 @@ class App:
                 g  = grp(col)
                 st = GRP_STYLE[g]
                 # Suggest giữ màu riêng; dat_thuc/nhan_xet tự override bên dưới
-                if g == 'suggest':
+                if g in ('suggest', 'suggest_bl', 'suggest_bs', 'tb_chan'):
                     fill_color = st[2] if is_odd else st[3]
                 else:
                     fill_color = 'FFFFFF' if is_odd else 'F0F4FF'
@@ -1197,9 +1314,12 @@ class App:
                 elif g == 'inv':
                     cell.font      = Font(name='Calibri', bold=True, size=10)
                     cell.alignment = ctr
-                elif g == 'suggest':
+                elif g in ('suggest', 'suggest_bl', 'suggest_bs'):
                     cell.font      = Font(name='Calibri', bold=True, size=11)
                     cell.alignment = ctr
+                elif g == 'tb_chan':
+                    cell.font      = Font(name='Calibri', bold=True, size=10)
+                    cell.alignment = rgt
                 elif g == 'dat_thuc':
                     cell.fill      = PatternFill('solid', fgColor='FFFBEB')
                     cell.font      = Font(name='Calibri', bold=True, size=11)
@@ -1224,8 +1344,12 @@ class App:
             'Color': 14, 'Frame Size': 13, 'Sub Category': 18,
             grand_col: 16, 'Tổng 6T Gần Nhất': 16, 'TB Tháng (6T GN)': 16,
             'Tồn Kho (Số Lượng)': 17, 'Tồn Bảo Lưu': 13, 'Tồn Khả Dụng': 14,
-            scol: 24, dtcol: 12, nxcol: 22,
+            scol: 26, dtcol: 12, nxcol: 22,
         }
+        if tb_bl_col: W[tb_bl_col] = 16
+        if tb_bs_col: W[tb_bs_col] = 16
+        if gy_bl_col: W[gy_bl_col] = 26
+        if gy_bs_col: W[gy_bs_col] = 26
         for c in year_total_cols + year_avg_cols:
             W[c] = 13
         for c in team_cols:
