@@ -541,47 +541,13 @@ class App:
         filter_row.bind('<Button-4>',   _left_scroll)
         filter_row.bind('<Button-5>',   _left_scroll)
 
-        # ── 3. Phân kênh Sale Team (BL / BS) ─────────────────────────────────
-        chan_card, chan_body = make_card(left, '④ Phân Kênh Sale Team',
-                                         '(tuỳ chọn · trống = dùng tất cả team)')
-        chan_body.config(pady=10)
-        chan_card.pack(fill=tk.X, pady=(0, 10))
-
-        tk.Label(chan_body,
-                 text='Sau khi Đọc Files, chọn Sale Team thuộc từng kênh. Trống = dùng tất cả team cho kênh đó.',
-                 font=(SANS, 10), bg=C['card'], fg=C['text2'],
-                 anchor='w', wraplength=460, justify='left').pack(fill=tk.X, pady=(0, 10))
-
-        chan_cols_frame = tk.Frame(chan_body, bg=C['card'])
-        chan_cols_frame.pack(fill=tk.X)
-        chan_cols_frame.columnconfigure(0, weight=1)
-        chan_cols_frame.columnconfigure(1, weight=1)
-
-        # ─ BL ────────────────────────────────────────────────────────────────
-        bl_col = tk.Frame(chan_cols_frame, bg=C['card'])
-        bl_col.grid(row=0, column=0, sticky='nsew', padx=(0, 6))
-        tk.Label(bl_col, text='Bán Lẻ (Retail)',
-                 font=(SANS, 12, 'bold'), bg=C['card'], fg=C['primary'],
-                 anchor='w').pack(fill=tk.X, pady=(0, 4))
-        self.bl_team_panel = FilterPanel(bl_col)
-        self.bl_team_panel.pack(fill=tk.BOTH, expand=True)
-
-        # ─ BS ────────────────────────────────────────────────────────────────
-        bs_col = tk.Frame(chan_cols_frame, bg=C['card'])
-        bs_col.grid(row=0, column=1, sticky='nsew', padx=(6, 0))
-        tk.Label(bs_col, text='Bán Sỉ (Wholesale)',
-                 font=(SANS, 12, 'bold'), bg=C['card'], fg='#6D28D9',
-                 anchor='w').pack(fill=tk.X, pady=(0, 4))
-        self.bs_team_panel = FilterPanel(bs_col)
-        self.bs_team_panel.pack(fill=tk.BOTH, expand=True)
-
-        # ── 4. Tồn kho tối thiểu + Leadtime (bắt buộc nhập, không có mặc định)
+        # ── 3. Tồn kho tối thiểu + Leadtime ──────────────────────────────────
         settings_row = tk.Frame(left, bg=C['bg'])
         settings_row.pack(fill=tk.X, pady=(0, 10))
         settings_row.columnconfigure(0, weight=1)
         settings_row.columnconfigure(1, weight=1)
 
-        mc, mbody = make_card(settings_row, '⑤ Tồn Kho Tối Thiểu', '(bắt buộc nhập)')
+        mc, mbody = make_card(settings_row, '④ Tồn Kho Tối Thiểu', '(bắt buộc nhập)')
         mrow = tk.Frame(mbody, bg=C['card'])
         mrow.pack(fill=tk.X)
         tk.Label(mrow, text='Số tháng :', font=(SANS, 13),
@@ -594,7 +560,7 @@ class App:
                  bg=C['card'], fg=C['text2']).pack(side=tk.LEFT, padx=(6, 0))
         mc.grid(row=0, column=0, sticky='nsew', padx=(0, 6))
 
-        lc2, lbody2 = make_card(settings_row, '⑥ Leadtime Về Hàng', '(bắt buộc nhập)')
+        lc2, lbody2 = make_card(settings_row, '⑤ Leadtime Về Hàng', '(bắt buộc nhập)')
         lrow = tk.Frame(lbody2, bg=C['card'])
         lrow.pack(fill=tk.X)
         tk.Label(lrow, text='Số tháng :', font=(SANS, 13),
@@ -711,14 +677,7 @@ class App:
             self.brand_panel.populate(brands)
             self.cat_panel.populate(cats)
 
-            # Sale Teams cho phân kênh BL / BS
-            teams: list = []
-            if SALES['sale_team'] in sales.columns:
-                teams = sorted(clean(sales[SALES['sale_team']]), key=str.upper)
-            self.bl_team_panel.populate(teams)
-            self.bs_team_panel.populate(teams)
-
-            self.log(f'✅  {len(brands)} thương hiệu  ·  {len(cats)} danh mục  ·  {len(teams)} sale team  →  sẵn sàng lọc')
+            self.log(f'✅  {len(brands)} thương hiệu  ·  {len(cats)} danh mục  →  sẵn sàng lọc')
 
         except Exception as e:
             self.log(f'❌  {e}')
@@ -755,8 +714,6 @@ class App:
 
         sel_brands = self.brand_panel.selected()
         sel_cats   = self.cat_panel.selected()
-        bl_teams   = self.bl_team_panel.selected()
-        bs_teams   = self.bs_team_panel.selected()
 
         brand_desc = ', '.join(sel_brands) if sel_brands else 'Tất cả'
         cat_desc   = ', '.join(sel_cats)   if sel_cats   else 'Tất cả'
@@ -768,8 +725,7 @@ class App:
         try:
             self.btn_run.config(state='disabled', text='⏳   Đang xử lý…')
             self.log(f'─── Tồn min: {m}T · Leadtime: {lt}T · Brand: {brand_desc} · Danh mục: {cat_desc} ───')
-            df  = self._process(s, i, m, lt, sel_brands, sel_cats,
-                                bl_teams=bl_teams, bs_teams=bs_teams)
+            df  = self._process(s, i, m, lt, sel_brands, sel_cats)
             out = self._export(df, m, lt, sel_brands, sel_cats)
             self.log(f'✅  Hoàn thành → {out}')
             messagebox.showinfo('Thành công', f'Đã tạo file gợi ý đặt hàng!\n\n📄 {out}')
@@ -784,8 +740,7 @@ class App:
 
     # ── Core logic ────────────────────────────────────────────────────────────
 
-    def _process(self, sales_path, inv_path, months, leadtime, sel_brands, sel_cats,
-                 bl_teams=None, bs_teams=None) -> pd.DataFrame:
+    def _process(self, sales_path, inv_path, months, leadtime, sel_brands, sel_cats) -> pd.DataFrame:
 
         # 1. Đọc & làm sạch bán hàng
         self.log('📊  Đọc file bán hàng…')
@@ -1000,14 +955,19 @@ class App:
             (result['TB Tháng (6T GN)'] * total_months_val) - result['Tồn Khả Dụng']
         ).clip(lower=0).round(0)
 
-        # 7b. Tính TB & Gợi Ý theo kênh BL / BS
+        # 7b. Tính TB & Gợi Ý theo kênh BL / BS — tự detect từ tên Sale Team
         tb_bl_col = gy_bl_col = tb_bs_col = gy_bs_col = None
 
-        def _channel_suggest(sales_df, team_filter, chan_name):
+        def _channel_suggest(sales_df, team_keywords, chan_name):
+            """Lọc sales theo team có chứa keyword, tính TB 6T GN và Gợi Ý."""
             if SALES['sale_team'] not in sales_df.columns:
                 return None, None, None
-            ch = (sales_df[sales_df[SALES['sale_team']].astype(str).isin(team_filter)]
-                  if team_filter else sales_df)
+            all_teams = sales_df[SALES['sale_team']].dropna().astype(str).unique()
+            matched   = [t for t in all_teams
+                         if any(kw in t.lower() for kw in team_keywords)]
+            if not matched:
+                return None, None, None
+            ch = sales_df[sales_df[SALES['sale_team']].astype(str).isin(matched)]
             if ch.empty:
                 return None, None, None
             ch_mo = (ch.groupby([SALES['sku'], '_month'])[SALES['qty']]
@@ -1025,16 +985,21 @@ class App:
             tb_col = f'TB {chan_name} (6T GN)'
             gy_col = f'Gợi Ý {chan_name} (Tồn {months}T + LT {leadtime}T)'
             tb_map = ch_piv.set_index('SKU')['_tb'].to_dict()
+            self.log(f'   Kênh {chan_name}: {len(matched)} team → {ch[SALES["sku"]].nunique():,} SKU có bán')
             return tb_col, gy_col, tb_map
 
-        tb_bl_col, gy_bl_col, tb_bl_map = _channel_suggest(sales, bl_teams, 'BL')
+        # BL: team tên chứa "lẻ" hoặc "retail"
+        tb_bl_col, gy_bl_col, tb_bl_map = _channel_suggest(
+            sales, ['lẻ', 'le', 'retail'], 'BL')
         if tb_bl_col:
             result[tb_bl_col] = result['SKU'].map(tb_bl_map).fillna(0).round(0)
             result[gy_bl_col] = (
                 result[tb_bl_col] * total_months_val - result['Tồn Khả Dụng']
             ).clip(lower=0).round(0)
 
-        tb_bs_col, gy_bs_col, tb_bs_map = _channel_suggest(sales, bs_teams, 'BS')
+        # BS: team tên chứa "sỉ", "si" hoặc "wholesale"
+        tb_bs_col, gy_bs_col, tb_bs_map = _channel_suggest(
+            sales, ['sỉ', 'si', 'wholesale'], 'BS')
         if tb_bs_col:
             result[tb_bs_col] = result['SKU'].map(tb_bs_map).fillna(0).round(0)
             result[gy_bs_col] = (
